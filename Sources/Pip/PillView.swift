@@ -151,7 +151,7 @@ private struct AppRow: View {
             Button("Move Up") { store.move(app.id, by: -1) }
             Button("Move Down") { store.move(app.id, by: 1) }
             Divider()
-            Button("Remove from Pip") { store.remove(app.id) }
+            Button("Don't Watch This App") { store.remove(app.id) }
         }
     }
 }
@@ -277,6 +277,7 @@ struct PipMenu: View {
         }
         Divider()
         Toggle("Pop Sound", isOn: $store.soundOn)
+        Toggle("Find Agents Automatically", isOn: $store.findAgents)
         Toggle("Open at Login", isOn: Binding(get: { store.openAtLogin }, set: { store.openAtLogin = $0 }))
         if !store.axTrusted {
             Button("Allow Accessibility…") { store.requestAccess(openSettings: true) }

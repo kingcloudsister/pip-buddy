@@ -124,7 +124,7 @@ struct ChatList: View {
         Button("Move Up") { store.move(t.id, by: -1) }
         Button("Move Down") { store.move(t.id, by: 1) }
         Divider()
-        Button("Remove from Pip") { store.remove(t.id) }
+        Button("Don't Watch This App") { store.remove(t.id) }
     }
 }
 

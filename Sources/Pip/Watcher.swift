@@ -49,17 +49,40 @@ final class Watcher {
         busy = true
         let targets = targets()
         let readBots = targets.contains { $0.id == GrokRoster.bundleID }
+        discoveryTick += 1
+        let candidates = store.findAgents && discoveryTick % 2 == 0 ? nextCandidates() : []
         worker.queue.async { [worker] in
             let probes = worker.probeAll(targets)
             let bots = readBots ? GrokRoster.read() : nil
+            let found = worker.discover(candidates)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     if let bots { self.store.ingestBots(bots) }
+                    for id in found { self.store.discovered(id) }
                     self.store.ingest(probes)
                     self.busy = false
                 }
             }
         }
+    }
+
+    private var nextCandidate = 0
+    private var discoveryTick = 0
+
+    /// Two running apps Pip doesn't watch yet, taking turns, so any app with an agent at work gets noticed
+    /// within a few seconds without reading every app on every poll.
+    private func nextCandidates() -> [Worker.Target] {
+        let tracked = Set(store.apps.compactMap(\.bundleID))
+        let pool = NSWorkspace.shared.runningApplications.filter { app in
+            guard app.activationPolicy == .regular, let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier
+            else { return false }
+            return !tracked.contains(id) && !store.ignored.contains(id) && !Worker.neverAgents.contains(id)
+        }
+        guard !pool.isEmpty else { return [] }
+        return (0..<min(2, pool.count)).map { k in
+            let app = pool[(nextCandidate + k) % pool.count]
+            return Worker.Target(id: app.bundleIdentifier!, name: app.localizedName ?? "", pid: app.processIdentifier)
+        }.also { nextCandidate = (nextCandidate + 2) % max(pool.count, 1) }
     }
 
     /// Brings a chat on screen in an app that lists its chats, by pressing its row in the sidebar.
@@ -106,17 +129,17 @@ final class Worker: @unchecked Sendable {
         polls += 1
         var result: [String: Probe] = [:]
         for t in targets {
-            var p = probe(t.pid)
+            var p = Self.terminals.contains(t.id) ? terminalProbe(t.pid) : probe(t.pid)
             p.badge = badges[t.name]
             result[t.id] = p
         }
         return result
     }
 
-    private func appElement(_ pid: pid_t) -> AXUIElement {
+    private func appElement(_ pid: pid_t, enhance: Bool = true) -> AXUIElement {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
-        if !enhanced.contains(pid) {
+        if enhance, !enhanced.contains(pid) {
             // Electron apps (Claude among them) and Chrome only build the page's accessibility tree when asked.
             // Electron takes AXManualAccessibility; browsers that reject it take AXEnhancedUserInterface.
             if AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue) != .success {
@@ -125,6 +148,174 @@ final class Worker: @unchecked Sendable {
             enhanced.insert(pid)
         }
         return app
+    }
+
+    // MARK: Finding agents in any app
+
+    /// Terminal apps: agents there are found by their "esc to interrupt" line, one card per window.
+    static let terminals: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
+                                         "com.mitchellh.ghostty", "net.kovidgoyal.kitty", "org.alacritty",
+                                         "co.zeit.hyper", "com.github.wez.wezterm"]
+    /// Apps whose "Stop" means something else (playing, recording, running a build), and system apps.
+    static let neverAgents: Set<String> = ["com.apple.finder", "com.apple.dock", "com.apple.systempreferences",
+        "com.apple.ActivityMonitor", "com.apple.Console", "com.spotify.client", "com.apple.Music", "com.apple.TV",
+        "com.apple.QuickTimePlayerX", "org.videolan.vlc", "com.apple.Photos", "com.apple.Preview",
+        "com.apple.VoiceMemos", "com.apple.dt.Xcode", "com.apple.iphonesimulator", "us.zoom.xos",
+        "com.apple.FaceTime", "com.apple.Podcasts", "com.apple.garageband10", "com.apple.iMovieApp"]
+    /// Browsers, where web agents (ChatGPT, Claude, Manus…) run in a tab.
+    static let browsers: Set<String> = ["com.apple.Safari", "com.google.Chrome", "company.thebrowser.Browser",
+        "company.thebrowser.dia", "com.brave.Browser", "com.microsoft.edgemac", "com.operasoftware.Opera",
+        "com.vivaldi.Vivaldi", "org.mozilla.firefox"]
+    /// Lines agents print while busy, in a terminal or an app.
+    static let busyHints = ["esc to interrupt", "esc to cancel", "ctrl+c to interrupt", "ctrl-c to interrupt",
+                            "esc to stop", "press esc to stop"]
+
+    /// Which of these not-yet-watched apps has an agent at work right now. Uses only strong signals:
+    /// a short "Stop generating"-style button, a conversation marked "Running", or an "esc to interrupt" line.
+    func discover(_ candidates: [Target]) -> [String] {
+        candidates.filter { t in
+            if Self.terminals.contains(t.id) { return !terminalAgents(t.pid).isEmpty }
+            // Ask an app for its full tree only when it looks like an AI tool or a browser; making every
+            // Electron app build one would cost them memory for nothing.
+            let enhance = Self.browsers.contains(t.id)
+                || (t.id + " " + t.name).range(of: #"(?i)(claude|cursor|copilot|codex|gpt|chat|grok|gemini|\bamp\b|agent|windsurf|perplexity|manus|devin|\bai\b|bot|code|zed)"#,
+                                              options: .regularExpression) != nil
+            var hit = false
+            walk(appElement(t.pid, enhance: enhance), maxNodes: 1000) { el, role, label in
+                let text = label.trimmingCharacters(in: .whitespaces)
+                if role == kAXButtonRole, Self.isAgentStop(text) || Self.runningSession(el, text) != nil { hit = true }
+                else if role == kAXStaticTextRole, let v: String = attr(el, kAXValueAttribute), v.count < 120,
+                        Self.busyHints.contains(where: v.lowercased().contains) { hit = true }
+                return !hit
+            }
+            if hit { Store.log("found an agent at work in \(t.name)") }
+            return hit
+        }.map(\.id)
+    }
+
+    /// Stricter than `isStopLabel`: only the buttons chat and agent apps show while generating.
+    static func isAgentStop(_ label: String) -> Bool {
+        var s = label.lowercased()
+        // Title and description often repeat: "Stop Stop".
+        let half = s.split(separator: " ", omittingEmptySubsequences: true)
+        if half.count % 2 == 0, half.count >= 2,
+           half[..<(half.count / 2)].elementsEqual(half[(half.count / 2)...]) { s = half[..<(half.count / 2)].joined(separator: " ") }
+        return s.range(of: #"^(stop( generating| response| responding| streaming| the response| run| agent| this task| task)?|interrupt( agent)?|cancel (generation|run|response))$"#,
+                       options: .regularExpression) != nil
+    }
+
+    /// A terminal's windows: the ones whose visible text shows an agent's "esc to interrupt" line, as a list
+    /// of conversations named after the window. Pip reads only the visible part, only to look for that line.
+    private func terminalProbe(_ pid: pid_t) -> Probe {
+        let app = appElement(pid, enhance: false)
+        let focused = (attr(app, kAXFocusedWindowAttribute) as AXUIElement?).flatMap { w in
+            (attr(w, kAXTitleAttribute) as String?).map(Self.cleanWindowTitle)
+        }
+        let agents = terminalAgents(pid)
+        return Probe(working: !agents.isEmpty, title: focused, sessions: agents, focused: focused)
+    }
+
+    private func terminalAgents(_ pid: pid_t) -> [String] {
+        let windows = allWindows(pid)
+        var names: [String] = []
+        for w in windows {
+            var busy = false
+            for area in descendants(of: w, role: kAXTextAreaRole, max: 400) {
+                if let text = visibleText(area)?.lowercased(), Self.busyHints.contains(where: text.contains) { busy = true; break }
+            }
+            guard busy else { continue }
+            let title = Self.cleanWindowTitle(attr(w, kAXTitleAttribute) ?? "")
+            names.append(title.isEmpty || names.contains(title) ? "Terminal window \(names.count + 1)" : title)
+        }
+        return names
+    }
+
+    /// For the report: each terminal window's title and how much visible text Pip could read.
+    func terminalReport(_ pid: pid_t) -> String {
+        let windows = allWindows(pid)
+        if windows.isEmpty { return "none readable" }
+        return windows.map { w in
+            let areas = descendants(of: w, role: kAXTextAreaRole, max: 400)
+            let text = areas.compactMap(visibleText).joined()
+            let busy = Self.busyHints.contains(where: text.lowercased().contains)
+            return "[\"\(Self.cleanWindowTitle(attr(w, kAXTitleAttribute) ?? ""))\" text areas: \(areas.count), visible chars: \(text.count), busy line: \(busy ? "yes" : "no")]"
+        }.joined(separator: " ")
+    }
+
+    private var otherSpaceWindows: [pid_t: (Date, [AXUIElement])] = [:]
+
+    /// An app's windows on every desktop. macOS's window list covers only the current desktop (a full-screen
+    /// app is a desktop of its own), so windows elsewhere are also looked up one by one by their element
+    /// number, the way window switchers do it. That lookup is cached for 15 seconds.
+    func allWindows(_ pid: pid_t) -> [AXUIElement] {
+        let app = appElement(pid, enhance: false)
+        var windows: [AXUIElement] = attr(app, kAXWindowsAttribute) ?? []
+        let cached = otherSpaceWindows[pid].flatMap { Date().timeIntervalSince($0.0) < 15 ? $0.1 : nil }
+        let others = cached ?? remoteWindows(pid)
+        if cached == nil { otherSpaceWindows[pid] = (Date(), others) }
+        for w in others where !windows.contains(where: { CFEqual($0, w) }) { windows.append(w) }
+        return windows
+    }
+
+    private func remoteWindows(_ pid: pid_t) -> [AXUIElement] {
+        var found: [AXUIElement] = []
+        var token = Data(count: 20)
+        token.replaceSubrange(0..<4, with: withUnsafeBytes(of: pid) { Data($0) })
+        token.replaceSubrange(8..<12, with: withUnsafeBytes(of: UInt32(0x636f636f)) { Data($0) })
+        for id in UInt64(0)..<400 {
+            token.replaceSubrange(12..<20, with: withUnsafeBytes(of: id) { Data($0) })
+            guard let el = _AXUIElementCreateWithRemoteToken(token as CFData)?.takeRetainedValue() else { continue }
+            AXUIElementSetMessagingTimeout(el, 0.05)
+            if (attr(el, kAXSubroleAttribute) as String?) == kAXStandardWindowSubrole { found.append(el) }
+        }
+        return found
+    }
+
+    /// A terminal title like "user — ✳ Fix the login bug — claude — 80×24" → "Fix the login bug":
+    /// the part the agent set, without the user name, shell or process, size, or spinner.
+    static func cleanWindowTitle(_ raw: String) -> String {
+        let user = NSUserName().lowercased()
+        let parts = raw.components(separatedBy: " — ").map { $0.trimmingCharacters(in: .whitespaces) }
+        let useful = parts.filter { p in
+            let l = p.lowercased()
+            return !l.isEmpty && l != user && !l.contains("◂")
+                && l.range(of: #"^\d+×\d+$"#, options: .regularExpression) == nil
+                && !["-zsh", "zsh", "-bash", "bash", "fish", "sh", "login", "node"].contains(l)
+        }
+        // Agents mark their title with a symbol (Claude Code's ✳); prefer that part.
+        let pick = useful.first { !($0.first?.isLetter ?? true) && !($0.first?.isNumber ?? true) } ?? useful.first ?? ""
+        let t = String(pick.drop { !($0.isLetter || $0.isNumber) })
+        return String(t.trimmingCharacters(in: .whitespaces).prefix(80))
+    }
+
+    /// The text currently on screen in a text area (not its whole scrollback).
+    private func visibleText(_ el: AXUIElement) -> String? {
+        var range: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXVisibleCharacterRangeAttribute as CFString, &range) == .success, let range {
+            var out: CFTypeRef?
+            if AXUIElementCopyParameterizedAttributeValue(el, kAXStringForRangeParameterizedAttribute as CFString, range, &out) == .success,
+               let s = out as? String { return String(s.suffix(6000)) }
+        }
+        return (attr(el, kAXValueAttribute) as String?).map { String($0.suffix(6000)) }
+    }
+
+    private func descendants(of root: AXUIElement, role: String, max: Int) -> [AXUIElement] {
+        var out: [AXUIElement] = []
+        var stack = [root]
+        var seen = 0
+        while let el = stack.popLast(), seen < max {
+            seen += 1
+            if (attr(el, kAXRoleAttribute) as String?) == role { out.append(el); continue }
+            if let kids: [AXUIElement] = attr(el, kAXChildrenAttribute) { stack.append(contentsOf: kids) }
+        }
+        return out
+    }
+
+    /// Brings forward the window whose (cleaned) title is `title`, like a terminal running that agent.
+    func raiseWindow(pid: pid_t, title: String) -> Bool {
+        guard let w = allWindows(pid).first(where: { Self.cleanWindowTitle(attr($0, kAXTitleAttribute) ?? "") == title }) else { return false }
+        AXUIElementSetAttributeValue(w, kAXMainAttribute as CFString, kCFBooleanTrue)
+        return AXUIElementPerformAction(w, kAXRaiseAction as CFString) == .success
     }
 
     private func probe(_ pid: pid_t, full: Bool = false) -> Probe {
@@ -169,6 +360,7 @@ final class Worker: @unchecked Sendable {
     /// Presses the sidebar row for the chat titled `title`. When the row is not in the current sidebar,
     /// tries the app's other modes (Claude's "Claude" chats and "Code" sessions), and goes back if none has it.
     func pressChat(pid: pid_t, title: String) -> Bool {
+        if raiseWindow(pid: pid, title: title) { return true }
         let app = appElement(pid)
         if let row = findChatRow(app, title) { return press(row) }
         let modes = modeButtons(app)
@@ -249,11 +441,15 @@ final class Worker: @unchecked Sendable {
     /// bottom of a chat, so this reaches them before thousands of message nodes in a long conversation.
     /// `visit` returns false to stop. Returns how many nodes it read.
     @discardableResult
-    private func walk(_ app: AXUIElement, _ visit: (AXUIElement, String, String) -> Bool) -> Int {
-        guard let windows: [AXUIElement] = attr(app, kAXWindowsAttribute) else { return 0 }
+    private func walk(_ app: AXUIElement, maxNodes: Int = Worker.maxNodes, _ visit: (AXUIElement, String, String) -> Bool) -> Int {
+        var pid: pid_t = 0
+        AXUIElementGetPid(app, &pid)
+        // Every desktop, so a full-screen app or one on another desktop is still seen.
+        let windows = allWindows(pid)
+        guard !windows.isEmpty else { return 0 }
         var stack = Array(windows.reversed())
         var count = 0
-        while let el = stack.popLast(), count < Self.maxNodes {
+        while let el = stack.popLast(), count < maxNodes {
             count += 1
             var values: CFArray?
             guard AXUIElementCopyMultipleAttributeValues(el, Self.attrs, AXCopyMultipleAttributeOptions(rawValue: 0), &values) == .success,
@@ -325,6 +521,7 @@ final class Worker: @unchecked Sendable {
             }
             lines.append("nodes scanned: \(nodes)\(nodes >= Self.maxNodes ? " (limit reached)" : ""), buttons: \(buttons.count)")
             if !sessions.isEmpty { lines.append("running conversations: " + sessions.joined(separator: "; ")) }
+            if Self.terminals.contains(t.id) { lines.append("terminal windows: " + terminalReport(t.pid)) }
             let live = probe(t.pid, full: true)
             if let f = live.focused { lines.append("on screen: " + f) }
             if let st = live.step { lines.append("current step: " + st) }
@@ -403,9 +600,29 @@ enum ReportMode {
         if trusted { worker.prepare(targets); Thread.sleep(forTimeInterval: 1.5) }
         var text = worker.diagnostics(targets, trusted: trusted)
         if tree, trusted { text += "\n\n" + targets.map { worker.dumpTree($0) }.joined(separator: "\n\n") }
+        if args.contains("--discover"), trusted {
+            // Every other running app, as discovery would see it.
+            let others = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !ids.contains($0.bundleIdentifier ?? "") }
+            text += "\n\nDiscovery:"
+            for r in others {
+                guard let id = r.bundleIdentifier, id != Bundle.main.bundleIdentifier else { continue }
+                let t = Worker.Target(id: id, name: r.localizedName ?? id, pid: r.processIdentifier)
+                let skip = Worker.neverAgents.contains(id)
+                let hit = skip ? false : !worker.discover([t]).isEmpty
+                text += "\n  \(skip ? "skip " : hit ? "AGENT" : "  -  ") \(t.name) (\(id))"
+                if Worker.terminals.contains(id) { text += " windows: " + worker.terminalReport(t.pid) }
+            }
+        }
         try? text.write(to: out, atomically: true, encoding: .utf8)
         return true
     }
+}
+
+@_silgen_name("_AXUIElementCreateWithRemoteToken")
+private func _AXUIElementCreateWithRemoteToken(_ token: CFData) -> Unmanaged<AXUIElement>?
+
+extension Array {
+    func also(_ f: () -> Void) -> Array { f(); return self }
 }
 
 private func attr<T>(_ el: AXUIElement, _ name: String) -> T? {

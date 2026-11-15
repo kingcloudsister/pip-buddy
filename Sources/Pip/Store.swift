@@ -78,6 +78,12 @@ final class Store: ObservableObject {
     @Published var collapsed = UserDefaults.standard.bool(forKey: "collapsed") {
         didSet { UserDefaults.standard.set(collapsed, forKey: "collapsed") }
     }
+    /// Watch every running app for an agent at work, and add the ones that have one.
+    @Published var findAgents = UserDefaults.standard.object(forKey: "findAgents") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(findAgents, forKey: "findAgents") }
+    }
+    /// Apps you removed: never added back on their own.
+    private(set) var ignored = Set(UserDefaults.standard.stringArray(forKey: "ignoredApps") ?? [])
     @Published var soundOn = UserDefaults.standard.object(forKey: "sound") as? Bool ?? true {
         didSet { UserDefaults.standard.set(soundOn, forKey: "sound") }
     }
@@ -143,12 +149,23 @@ final class Store: ObservableObject {
     func app(_ id: String) -> Tracked? { apps.first { $0.id == id } }
 
     func add(_ bundleID: String) {
+        if ignored.remove(bundleID) != nil { UserDefaults.standard.set(Array(ignored), forKey: "ignoredApps") }
         guard app(bundleID) == nil, let t = Self.makeTracked(bundleID) else { return }
         apps.append(t)
         persist()
     }
 
+    /// An app where discovery saw an agent at work: watch it from now on.
+    func discovered(_ bundleID: String) {
+        guard findAgents, !ignored.contains(bundleID), app(bundleID) == nil else { return }
+        add(bundleID)
+    }
+
     func remove(_ id: String) {
+        if let b = app(id)?.bundleID {
+            ignored.insert(b)
+            UserDefaults.standard.set(Array(ignored), forKey: "ignoredApps")
+        }
         apps.removeAll { $0.id == id }
         if announcing == id { announcing = nil }
         if hovered == id { hovered = nil }

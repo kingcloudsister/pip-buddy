@@ -35,6 +35,15 @@ A finished chat stays on the strip until you pick it back up, so a quick glance 
 - After 10 minutes away, Pip nudges once: "Still waiting on you".
 - It goes away when that chat runs again, when you right-click → **Done with This**, or after 8 hours.
 
+## Finding agents on its own
+
+You don't have to add apps. Every few seconds Pip glances at one or two running apps it doesn't watch yet, taking turns, and looks for an agent at work:
+
+- **Apps and browsers:** a short **Stop** / **Stop generating** / **Interrupt** button, or a chat marked **Running**.
+- **Terminals** (Terminal, iTerm2, Ghostty, Warp, kitty and others): an agent's busy line such as **"esc to interrupt"** or **"esc to cancel"** (Claude Code, Codex, Gemini CLI). Each terminal window with a working agent gets its own card, named after the task in the window title, and clicking it brings that window forward.
+
+When it finds one, that app joins the strip and shows up whenever something is working. Pip sees windows on every desktop, including full-screen apps. Music, video, system apps and Xcode are skipped, since their "Stop" means something else. Right-click an app → **Don't Watch This App** to keep it out for good, or turn off **Find Agents Automatically** in the menu.
+
 ## How it knows a chat is done
 
 Every 1.5 seconds Pip looks at the apps you track. Chat apps show a **Stop** button while they generate; when it disappears, the chat is done. A new number on an app's Dock badge counts too. Apps that list their chats with a status, like the Claude app's sidebar ("Fix the login bug · Running"), are followed chat by chat.
@@ -62,7 +71,7 @@ curl -s "http://127.0.0.1:47321/done?app=My%20Agent&note=Tests%20pass&open=com.a
 
 Everything Pip knows stays on your Mac.
 
-- **What it reads:** with the Accessibility permission, the window titles, button labels and chat names of the apps you track, plus Dock badges. For Grok Bot, the bot names, unread counts and message IDs in Grok Bot's local list (never the messages, and never its saved secrets). Not the messages themselves, in any app.
+- **What it reads:** with the Accessibility permission, the window titles, button labels and chat names of the apps you track, plus Dock badges. To find agents it also glances at other running apps' buttons, and at the text on screen in terminal windows, only to look for a busy line like "esc to interrupt"; nothing from it is kept. To see windows on other desktops it uses the same window lookup as window-switcher apps. For Grok Bot, the bot names, unread counts and message IDs in Grok Bot's local list (never the messages, and never its saved secrets). Not the messages themselves, in any app.
 - **What it presses:** only a chat's row in an app's sidebar (and Claude's Chat/Code switch), and only when you click that chat in Pip. It never types.
 - **What it stores:** your app list, its position and settings (in its preferences), and a log of state changes at `~/Library/Logs/Pip.log` (app and chat names, no message text). None of it is ever uploaded.
 - **What goes over the internet:** only the update check, a plain request to GitHub for this repo's latest release, and the download when you install one. No account, no tracking. Turn it off in the right-click menu.
