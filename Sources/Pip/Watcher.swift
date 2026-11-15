@@ -4,10 +4,14 @@ import ApplicationServices
 struct Probe {
     var working: Bool
     var title: String?
-    var badge: String?
+    var badge: String? = nil
     /// Titles of conversations the app lists as running (Claude's sidebar marks them "Running").
     /// nil when this poll did not look, so the previous list still stands.
-    var sessions: [String]?
+    var sessions: [String]? = nil
+    /// What the app says it is doing right now, like Claude's "Running tests" step row.
+    var step: String? = nil
+    /// The conversation open on screen, so `step` can be put on the right one.
+    var focused: String? = nil
 }
 
 /// Polls tracked apps through the Accessibility API.
@@ -84,8 +88,9 @@ final class Worker: @unchecked Sendable {
         polls += 1
         var result: [String: Probe] = [:]
         for t in targets {
-            let (working, title, sessions) = probe(t.pid)
-            result[t.id] = Probe(working: working, title: title, badge: badges[t.name], sessions: sessions)
+            var p = probe(t.pid)
+            p.badge = badges[t.name]
+            result[t.id] = p
         }
         return result
     }
@@ -104,32 +109,43 @@ final class Worker: @unchecked Sendable {
         return app
     }
 
-    private func probe(_ pid: pid_t) -> (Bool, String?, [String]?) {
+    private func probe(_ pid: pid_t, full: Bool = false) -> Probe {
         let app = appElement(pid)
         var title: String?
         if let win: AXUIElement = attr(app, kAXFocusedWindowAttribute) ?? attr(app, kAXMainWindowAttribute) {
             title = attr(win, kAXTitleAttribute)
         }
-        // Apps that list running conversations get a full read every other poll (3 s) so the list stays fresh;
-        // in between, and for every other app, the cached Stop button or a walk that ends at it is enough.
-        let fullRead = sessionApps.contains(pid) ? polls % 2 == 0 : true
-        if !fullRead || !sessionApps.contains(pid), let cached = cachedStop[pid], isStopButton(cached) {
-            return (true, title, nil)
+        // A full read every other poll (3 s) keeps the conversation list and the current step fresh.
+        // In between, a cached Stop button that is still there is enough to say "working".
+        if !full, polls % 2 == 1 {
+            if let cached = cachedStop[pid], isStopButton(cached) { return Probe(working: true, title: title) }
+            return Probe(working: false, title: title, sessions: nil)
         }
-        if !fullRead { return (false, title, nil) }
         cachedStop[pid] = nil
         var found: AXUIElement?
         var sessions: [String] = []
+        var step: String?
+        var focused: String?
         walk(app) { el, role, label in
             guard role == kAXButtonRole else { return true }
-            if found == nil, Self.isStopLabel(label) { found = el }
-            if let s = Self.runningSession(el, label) { sessions.append(s) }
-            // Stop early only for apps without a session list: nothing else to find past the Stop button.
-            return found == nil || sessionApps.contains(pid)
+            let text = label.trimmingCharacters(in: .whitespaces)
+            if found == nil, Self.isStopLabel(text) { found = el }
+            if let s = Self.runningSession(el, text) {
+                sessions.append(s)
+            } else if step == nil, text.hasSuffix(" running"), text.count > 8 {
+                // Claude's step rows read "<what it is doing> running"; the walk meets the newest one first.
+                step = String(text.dropLast(" running".count).prefix(90))
+            }
+            // The open chat's header button: "<title>, rename session" (title and description both say it).
+            if focused == nil, let r = text.range(of: ", rename session") {
+                focused = String(text[..<r.lowerBound])
+            }
+            return true
         }
         if let found { cachedStop[pid] = found }
         if !sessions.isEmpty { sessionApps.insert(pid) }
-        return (found != nil, title, sessionApps.contains(pid) ? sessions : nil)
+        return Probe(working: found != nil, title: title, sessions: sessionApps.contains(pid) ? sessions : nil,
+                     step: step, focused: focused)
     }
 
     private static let runningWords: Set<String> = ["running", "working", "thinking", "generating", "in progress"]
@@ -190,7 +206,9 @@ final class Worker: @unchecked Sendable {
 
     static func isStopLabel(_ label: String) -> Bool {
         let s = label.lowercased()
-        guard s.range(of: #"\b(stop|interrupt)"#, options: .regularExpression) != nil else { return false }
+        // Real stop controls are short ("Stop", "Stop response", "Stop this task"). Longer labels that mention
+        // stopping are usually lines in a transcript, like "Ran a command, stopped task".
+        guard s.count <= 32, s.range(of: #"\b(stop|interrupt)\b"#, options: .regularExpression) != nil else { return false }
         // Voice, recording, and browser page-load controls also say "stop"; they do not mean the model is generating.
         let ignore = ["loading", "record", "dictat", "listen", "voice", "speak", "audio", "video", "screen share", "sharing", "read aloud"]
         return !ignore.contains { s.contains($0) }
@@ -236,6 +254,9 @@ final class Worker: @unchecked Sendable {
             }
             lines.append("nodes scanned: \(nodes)\(nodes >= Self.maxNodes ? " (limit reached)" : ""), buttons: \(buttons.count)")
             if !sessions.isEmpty { lines.append("running conversations: " + sessions.joined(separator: "; ")) }
+            let live = probe(t.pid, full: true)
+            if let f = live.focused { lines.append("on screen: " + f) }
+            if let st = live.step { lines.append("current step: " + st) }
             lines.append(contentsOf: buttons.prefix(120))
             if !hints.isEmpty {
                 lines.append("other elements that mention work:")

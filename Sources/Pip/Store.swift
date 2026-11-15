@@ -10,6 +10,13 @@ enum Status: Equatable {
 
 enum Mood { case sleepy, busy, happy }
 
+/// A conversation an app lists as running, like a session in Claude's sidebar.
+struct Session: Equatable {
+    var title: String
+    var since = Date()
+    var step: String?           // what it is doing now, when it is the one on screen
+}
+
 struct Tracked: Identifiable, Equatable {
     let id: String              // bundle ID, or "hook:<name>" for apps that report through the local hook
     var name: String
@@ -20,7 +27,8 @@ struct Tracked: Identifiable, Equatable {
     var unseen = false          // finished while you were elsewhere and you have not looked yet
     var title: String?          // front window title, usually the conversation name
     var note: String?           // message sent with a hook
-    var sessions: [String] = [] // conversations the app lists as running, when it shows them (Claude's sidebar)
+    var sessions: [Session] = []    // conversations the app lists as running, when it shows them (Claude's sidebar)
+    var step: String?               // what the app says it is doing, when it is not tied to a listed conversation
     var lastDone: String?       // the conversation that finished most recently
 }
 
@@ -204,6 +212,7 @@ final class Store: ObservableObject {
             }
 
             let ended = p.sessions.map { updateSessions(i, $0) } ?? []
+            if p.sessions != nil || p.step != nil { placeStep(i, p.step, focused: p.focused) }
             if p.working || !apps[i].sessions.isEmpty {
                 misses[id] = 0
                 if case .working = apps[i].status {} else { apps[i].status = .working(since: Date()) }
@@ -219,6 +228,7 @@ final class Store: ObservableObject {
                     if misses[id]! >= 2 { finish(id, note: nil) }
                 }
             }
+            if !apps[i].isWorking, apps[i].step != nil { apps[i].step = nil }
 
             // A new or bigger Dock badge also means something finished.
             let badge = p.badge ?? ""
@@ -233,16 +243,27 @@ final class Store: ObservableObject {
     /// A conversation must be missing from two reads in a row, so a list that redraws is not a false "done".
     private func updateSessions(_ i: Int, _ now: [String]) -> [String] {
         let id = apps[i].id
-        var keep = now
+        let old = apps[i].sessions
+        var keep: [Session] = now.map { title in old.first { $0.title == title } ?? Session(title: title) }
         var ended: [String] = []
         for title in now { sessionMisses[id + "\n" + title] = nil }
-        for title in apps[i].sessions where !now.contains(title) {
-            let key = id + "\n" + title
+        for s in old where !now.contains(s.title) {
+            let key = id + "\n" + s.title
             sessionMisses[key, default: 0] += 1
-            if sessionMisses[key]! >= 2 { sessionMisses[key] = nil; ended.append(title) } else { keep.append(title) }
+            if sessionMisses[key]! >= 2 { sessionMisses[key] = nil; ended.append(s.title) } else { keep.append(s) }
         }
         if apps[i].sessions != keep { apps[i].sessions = keep }
         return ended
+    }
+
+    /// Puts the app's current step on the conversation that is open on screen, or on the app itself.
+    private func placeStep(_ i: Int, _ step: String?, focused: String?) {
+        if let k = apps[i].sessions.firstIndex(where: { $0.title == focused }) ?? (apps[i].sessions.count == 1 ? 0 : nil) {
+            if apps[i].sessions[k].step != step { apps[i].sessions[k].step = step }
+            if apps[i].step != nil { apps[i].step = nil }
+        } else if apps[i].step != step {
+            apps[i].step = step
+        }
     }
 
     private func finishSession(_ i: Int, _ title: String) {
@@ -362,6 +383,12 @@ final class Store: ObservableObject {
         }
     }
 
+    /// What the strip and panel show: apps that are open, and script-reported rows while they have news.
+    var visibleApps: [Tracked] {
+        _ = runningChanged
+        return apps.filter { t in t.bundleID == nil ? (t.isWorking || t.unseen) : isRunning(t) }
+    }
+
     func isRunning(_ t: Tracked) -> Bool {
         guard let b = t.bundleID else { return true }
         _ = runningChanged
@@ -393,17 +420,25 @@ final class Store: ObservableObject {
     }
 
     var activeSummary: String {
-        let n = apps.reduce(0) { n, t in n + max(t.sessions.count + (t.unseen ? 1 : 0), t.unseen || t.isWorking ? 1 : 0) }
+        let n = visibleApps.reduce(0) { n, t in n + max(t.sessions.count + (t.unseen ? 1 : 0), t.unseen || t.isWorking ? 1 : 0) }
         return n == 0 ? "ALL QUIET" : n == 1 ? "1 CHAT ACTIVE" : "\(n) CHATS ACTIVE"
     }
 
     /// The conversation's name: the one that just finished, the ones running, or the window title.
     func cardTitle(_ t: Tracked) -> String {
         if t.unseen, let done = t.lastDone { return done }
-        if let first = t.sessions.first { return t.sessions.count == 1 ? first : "\(first) +\(t.sessions.count - 1)" }
+        if t.sessions.count == 1 { return t.sessions[0].title }
+        if t.sessions.count > 1 { return "\(t.name) · \(t.sessions.count) chats" }
         if case .done = t.status, let done = t.lastDone { return done }
         if let title = t.title, !title.isEmpty, title != t.name { return title }
         return t.name
+    }
+
+    /// "Now: Running the tests · 4 min", or "Working for 4 min" when the step is not known.
+    func sessionDetail(_ s: Session) -> String {
+        let minutes = Int(Date().timeIntervalSince(s.since) / 60)
+        if let step = s.step { return "Now: " + step + (minutes >= 1 ? " · \(minutes) min" : "") }
+        return minutes < 1 ? "Working on it…" : "Working for \(minutes) min"
     }
 
     func cardDetail(_ t: Tracked) -> String {
@@ -411,7 +446,13 @@ final class Store: ObservableObject {
         let what: String
         switch t.status {
         case .working where t.unseen && !t.sessions.isEmpty:
-            what = t.sessions.count == 1 ? "\(t.sessions[0]) still running" : "\(t.sessions.count) more still running"
+            what = t.sessions.count == 1 ? "\(t.sessions[0].title) still running" : "\(t.sessions.count) more still running"
+        case .working where t.sessions.count > 1:
+            return t.sessions.map { "• " + $0.title + ($0.step.map { " — " + $0 } ?? "") }.joined(separator: "\n")
+        case .working where t.sessions.count == 1:
+            return sessionDetail(t.sessions[0])
+        case .working(let since) where t.step != nil:
+            what = "now: " + t.step! + (Date().timeIntervalSince(since) >= 60 ? " · \(Int(Date().timeIntervalSince(since) / 60)) min" : "")
         case .working(let since):
             let minutes = Int(Date().timeIntervalSince(since) / 60)
             what = minutes < 1 ? "working on it…" : "working for \(minutes) min"

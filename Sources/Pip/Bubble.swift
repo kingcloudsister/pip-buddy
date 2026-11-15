@@ -16,8 +16,8 @@ struct BubbleContent {
         if let h = store.hovered {
             switch h {
             case "pip:mascot":
-                let done = store.apps.filter(\.unseen).count
-                let working = store.apps.filter(\.isWorking).count
+                let done = store.visibleApps.filter(\.unseen).count
+                let working = store.visibleApps.reduce(0) { $0 + ($1.isWorking ? max(1, $1.sessions.count) : 0) }
                 var parts: [String] = []
                 if done > 0 { parts.append("\(done) ready") }
                 if working > 0 { parts.append("\(working) working") }
@@ -26,16 +26,18 @@ struct BubbleContent {
             case "pip:access":
                 return BubbleContent(key: h, title: "Let Pip see your chats", badge: ("SETUP", Theme.readyBg, Theme.readyFg),
                                      detail: "Allow Pip in Accessibility settings", cta: "Click to allow",
-                                     centerY: Theme.rowCenter(store.apps.count))
+                                     centerY: Theme.rowCenter(store.visibleApps.count))
             default:
-                guard let i = store.apps.firstIndex(where: { $0.id == h }) else { return nil }
-                let t = store.apps[i]
+                let shown = store.visibleApps
+                guard let i = shown.firstIndex(where: { $0.id == h }) else { return nil }
+                let t = shown[i]
                 return BubbleContent(key: h, icon: t.icon, title: store.cardTitle(t), badge: store.badge(t),
                                      detail: store.cardDetail(t), centerY: Theme.rowCenter(i))
             }
         }
-        if let a = store.announcing, let i = store.apps.firstIndex(where: { $0.id == a }) {
-            let t = store.apps[i]
+        let shown = store.visibleApps
+        if let a = store.announcing, let i = shown.firstIndex(where: { $0.id == a }) {
+            let t = shown[i]
             return BubbleContent(key: "done:" + a, icon: t.icon, title: store.cardTitle(t), badge: ("READY", Theme.readyBg, Theme.readyFg),
                                  detail: store.cardDetail(t), cta: "Tap back", tapID: a, centerY: Theme.rowCenter(i))
         }
@@ -67,7 +69,9 @@ struct PopCard: View {
                     if let b = c.badge { BadgeLabel(badge: b) }
                 }
                 if let d = c.detail, !d.isEmpty {
-                    Text(d).font(.system(size: 11.5)).foregroundStyle(Theme.muted).lineLimit(2)
+                    // Several running chats list one per line.
+                    Text(d).font(.system(size: 11.5)).foregroundStyle(Theme.muted).lineLimit(d.contains("\n") ? 6 : 2)
+                        .lineSpacing(2)
                 }
                 if let cta = c.cta {
                     Text(cta).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.tapBackInk)

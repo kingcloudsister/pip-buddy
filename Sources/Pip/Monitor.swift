@@ -79,19 +79,34 @@ struct ChatList: View {
                     Card(title: "Let Pip see your chats", detail: "Allow Pip in Accessibility settings",
                          badge: ("SETUP", Theme.readyBg, Theme.readyFg)) { store.requestAccess(openSettings: true) }
                 }
-                ForEach(store.apps) { t in
-                    Card(title: store.cardTitle(t), detail: store.cardDetail(t), icon: t.icon, badge: store.badge(t),
-                         dimmed: !store.isRunning(t)) { store.open(t.id) }
-                        .contextMenu {
-                            Button("Open \(t.name)") { store.open(t.id) }
-                            Button("Move Up") { store.move(t.id, by: -1) }
-                            Button("Move Down") { store.move(t.id, by: 1) }
-                            Divider()
-                            Button("Remove from Pip") { store.remove(t.id) }
+                ForEach(store.visibleApps) { t in
+                    Group {
+                        if t.sessions.count > 1 {
+                            // One card per running chat, plus the one that just finished.
+                            if t.unseen, let done = t.lastDone {
+                                Card(title: done, detail: "\(t.name) · finished", icon: t.icon,
+                                     badge: ("READY", Theme.readyBg, Theme.readyFg)) { store.open(t.id) }
+                            }
+                            ForEach(t.sessions, id: \.title) { s in
+                                Card(title: s.title, detail: store.sessionDetail(s), icon: t.icon,
+                                     badge: ("WORKING", Theme.workingBg, Theme.workingFg)) { store.open(t.id) }
+                            }
+                        } else {
+                            Card(title: store.cardTitle(t), detail: store.cardDetail(t), icon: t.icon,
+                                 badge: store.badge(t)) { store.open(t.id) }
                         }
+                    }
+                    .contextMenu {
+                        Button("Open \(t.name)") { store.open(t.id) }
+                        Button("Move Up") { store.move(t.id, by: -1) }
+                        Button("Move Down") { store.move(t.id, by: 1) }
+                        Divider()
+                        Button("Remove from Pip") { store.remove(t.id) }
+                    }
                 }
-                if store.apps.isEmpty {
-                    Text("Add an app with ⊕ and Pip will watch it for you.")
+                if store.visibleApps.isEmpty {
+                    Text(store.apps.isEmpty ? "Add an app with ⊕ and Pip will watch it for you."
+                                            : "None of your apps are open. Pip shows them here when they are.")
                         .font(.system(size: 12)).foregroundStyle(Theme.muted)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
                 }

@@ -23,7 +23,7 @@ struct PillView: View {
                 .frame(height: Theme.gap)
 
             VStack(spacing: Theme.rowGap) {
-                ForEach(store.apps) { AppRow(app: $0, store: store) }
+                ForEach(store.visibleApps) { AppRow(app: $0, store: store) }
                 if !store.axTrusted { AccessRow(store: store) }
                 AddButton(store: store)
             }
@@ -36,7 +36,7 @@ struct PillView: View {
                 .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
         )
         .padding(Theme.margin)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: store.apps.map(\.id))
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: store.visibleApps.map(\.id))
     }
 }
 
@@ -54,19 +54,26 @@ private struct AppRow: View {
 
     var body: some View {
         let hovered = store.hovered == app.id
-        let running = store.isRunning(app)
         ZStack {
             Tile().opacity(hovered ? 1 : 0)
             Image(nsImage: app.icon)
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 26, height: 26)
-                // Apps that are not open fade to gray so the open ones stand out.
-                .saturation(running ? 1 : 0)
-                .opacity(running ? 1 : 0.45)
                 .offset(y: app.isWorking ? -3 : 0)
             if app.isWorking {
                 WorkingDots().offset(y: 14)
+            }
+            if app.sessions.count > 1 {
+                // Several chats running in this app at once.
+                Text("\(app.sessions.count)")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.workingFg)
+                    .frame(minWidth: 14, minHeight: 14)
+                    .background(Circle().fill(Theme.tile))
+                    .overlay(Circle().strokeBorder(Theme.tan, lineWidth: 1.5).padding(-1.5))
+                    .offset(x: -13, y: -12)
+                    .transition(.scale.combined(with: .opacity))
             }
             if app.unseen {
                 Circle().fill(Theme.rose)
@@ -80,6 +87,7 @@ private struct AppRow: View {
         .contentShape(Rectangle())
         .animation(.easeOut(duration: 0.15), value: hovered)
         .animation(.spring(response: 0.3, dampingFraction: 0.55), value: app.unseen)
+        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: app.sessions.count)
         .onHover { store.setHover(app.id, $0) }
         .onTapGesture { store.open(app.id) }
         .contextMenu {

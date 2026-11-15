@@ -3,7 +3,7 @@
 A tiny floating pill for the edge of your Mac screen. It watches your AI chat apps (Claude, Amp, Grok, ChatGPT, or anything you add), pops a bubble when one finishes while you are somewhere else, and lets you jump back with one click.
 
 - **Pip (the face)** is a little square face at the top of the strip: eyes closed when nothing runs, watching with a waving antenna while an app is thinking, and smiling with a hop when something is done. Click it and the monitor panel slides out from behind the strip: one card per app with its chat title and a Working or Ready badge. The arrow in the panel hops to the newest finished chat and the gear opens settings. Click a card to switch to it; click anywhere else to tuck the panel away. When a chat finishes while the panel is closed, only that chat's card slides out next to its icon, with Tap back. Drag it to either screen edge. Right-click for settings.
-- **Rows** are your apps, softly faded while quiet. Three hopping dots mean working; a pink dot means finished and not seen yet. Hover for status and the chat title; click to switch.
+- **Rows** are your apps that are open right now; quit an app and its row goes away until you open it again. Three hopping dots mean working; a small number means several chats are running in that app at once; a pink dot means finished and not seen yet. Hover for each chat's title and what it is doing now ("Now: Running the tests · 4 min"); click to switch.
 - **+** adds any open app, or any app from /Applications.
 
 ## Install
@@ -30,7 +30,7 @@ On first launch, allow Pip in **System Settings → Privacy & Security → Acces
 
 Every 1.5 seconds Pip looks for a **Stop** button in each tracked app's window (chat apps show one while they generate). When it disappears, the app is done. A new number on the app's Dock badge also counts.
 
-Apps that list conversations with a status, like the Claude app's sidebar ("Fix the login bug · Running"), are tracked per conversation: the card shows which ones are running, and when one finishes Pip says "<that conversation> is ready!" even while others keep going.
+Apps that list conversations with a status, like the Claude app's sidebar ("Fix the login bug · Running"), are tracked per conversation: the panel shows one card per running chat, with the step Claude is on for the chat that is open on screen, and when one finishes Pip says "<that conversation> is ready!" even while others keep going.
 
 If an app never shows as working, right-click Pip → **Copy Detection Report** while it is generating to see the buttons Pip can see. Or write the report to a file:
 
