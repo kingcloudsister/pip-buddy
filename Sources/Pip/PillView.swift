@@ -143,7 +143,7 @@ private struct AppRow: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.55), value: app.unseen)
         .animation(.spring(response: 0.3, dampingFraction: 0.6), value: app.sessions.count)
         .onHover { store.setHover(app.id, $0) }
-        .onTapGesture { store.open(app.id) }
+        .onTapGesture { store.open(app.id, chat: store.chatToOpen(app)) }
         .contextMenu {
             Button("Open \(app.name)") { store.open(app.id) }
             if !app.waiting.isEmpty { Button("Done with This") { store.dismiss(app.id) } }

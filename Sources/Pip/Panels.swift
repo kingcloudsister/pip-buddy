@@ -177,7 +177,7 @@ final class BubbleController {
         let store = store
         func card(wrap: CGFloat?) -> PopCard {
             PopCard(content: c, edge: edge, wrapWidth: wrap) {
-                if let id = c.tapID { store.open(id) }
+                if let id = c.tapID { store.open(id, chat: c.tapChat) }
                 else if c.key == "pip:access" { store.requestAccess(openSettings: true) }
                 else if c.key == "pip:mascot" { store.panelOpen = true }
             }

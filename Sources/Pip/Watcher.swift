@@ -59,6 +59,16 @@ final class Watcher {
         }
     }
 
+    /// Brings a chat on screen in an app that lists its chats, by pressing its row in the sidebar.
+    func openChat(bundleID: String, title: String) {
+        guard let r = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { return }
+        let pid = r.processIdentifier
+        worker.queue.async { [worker] in
+            let ok = worker.pressChat(pid: pid, title: title)
+            Store.log("open chat \"\(title)\": \(ok ? "pressed its row" : "row not found, opened the app only")")
+        }
+    }
+
     /// Text describing what Pip sees in each tracked app, for when detection misses an app.
     func diagnostics(_ completion: @escaping (String) -> Void) {
         let targets = targets()
@@ -146,6 +156,59 @@ final class Worker: @unchecked Sendable {
         if !sessions.isEmpty { sessionApps.insert(pid) }
         return Probe(working: found != nil, title: title, sessions: sessionApps.contains(pid) ? sessions : nil,
                      step: step, focused: focused)
+    }
+
+    /// Presses the sidebar row for the chat titled `title`. When the row is not in the current sidebar,
+    /// tries the app's other modes (Claude's "Claude" chats and "Code" sessions), and goes back if none has it.
+    func pressChat(pid: pid_t, title: String) -> Bool {
+        let app = appElement(pid)
+        if let row = findChatRow(app, title) { return press(row) }
+        let modes = modeButtons(app)
+        guard let current = modes.first(where: { (attr($0, kAXValueAttribute) as Int?) == 1 }) else { return false }
+        for mode in modes where !CFEqual(mode, current) {
+            guard press(mode) else { continue }
+            // The sidebar redraws after a mode switch.
+            for _ in 0..<8 {
+                Thread.sleep(forTimeInterval: 0.15)
+                if let row = findChatRow(app, title) { return press(row) }
+            }
+        }
+        _ = press(current)
+        return false
+    }
+
+    private func press(_ el: AXUIElement) -> Bool { AXUIElementPerformAction(el, kAXPressAction as CFString) == .success }
+
+    /// A sidebar row: a button reading the chat's title, maybe followed by a short status ("Running", "Merged").
+    /// Skips the row's "More options" menu and the open chat's rename button.
+    private func findChatRow(_ app: AXUIElement, _ title: String) -> AXUIElement? {
+        let t = title.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        var exact: AXUIElement?
+        var withStatus: AXUIElement?
+        walk(app) { el, role, label in
+            guard role == kAXButtonRole else { return true }
+            let text = label.trimmingCharacters(in: .whitespaces)
+            if text.hasPrefix("More options") || text.contains(", rename session") { return true }
+            // Title and description often repeat each other: "Weekly report Weekly report".
+            if text == t || text == t + " " + t { exact = el; return false }
+            if withStatus == nil, text.hasPrefix(t + " "), !text.dropFirst(t.count + 1).contains(" ") { withStatus = el }
+            return true
+        }
+        return exact ?? withStatus
+    }
+
+    /// The options of a "Mode" switch, like Claude's Claude / Code.
+    private func modeButtons(_ app: AXUIElement) -> [AXUIElement] {
+        var radios: [AXUIElement] = []
+        walk(app) { el, role, _ in
+            if role == kAXRadioButtonRole, let parent: AXUIElement = attr(el, kAXParentAttribute),
+               [kAXTitleAttribute, kAXDescriptionAttribute].contains(where: { ((attr(parent, $0) as String?) ?? "").contains("Mode") }) {
+                radios.append(el)
+            }
+            return true
+        }
+        return radios
     }
 
     private static let runningWords: Set<String> = ["running", "working", "thinking", "generating", "in progress"]
@@ -308,6 +371,16 @@ final class Worker: @unchecked Sendable {
 enum ReportMode {
     static func runIfRequested() -> Bool {
         let args = CommandLine.arguments
+        // `--open-chat <bundle id> <title> <result file>`: press that chat's row, for testing chat opening.
+        if let k = args.firstIndex(of: "--open-chat"), k + 3 < args.count,
+           let r = NSRunningApplication.runningApplications(withBundleIdentifier: args[k + 1]).first {
+            let worker = Worker()
+            worker.prepare([Worker.Target(id: args[k + 1], name: r.localizedName ?? "", pid: r.processIdentifier)])
+            Thread.sleep(forTimeInterval: 0.5)
+            let ok = worker.pressChat(pid: r.processIdentifier, title: args[k + 2])
+            try? (ok ? "pressed" : "not found").write(toFile: args[k + 3], atomically: true, encoding: .utf8)
+            return true
+        }
         guard let i = args.firstIndex(of: "--report"), i + 1 < args.count else { return false }
         let out = URL(fileURLWithPath: (args[i + 1] as NSString).expandingTildeInPath)
         let tree = args.contains("--tree")

@@ -187,13 +187,20 @@ final class Store: ObservableObject {
 
     // MARK: Switching
 
-    func open(_ id: String) {
+    /// Brings the app forward and, for apps that list their chats (Claude), opens `chat` itself.
+    func open(_ id: String, chat: String? = nil) {
         guard let t = app(id) else { return }
         if let bundle = t.bundleID ?? t.openBundleID,
            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
             let config = NSWorkspace.OpenConfiguration()
             config.activates = true
             NSWorkspace.shared.openApplication(at: url, configuration: config)
+            if let chat, t.listsChats, let b = t.bundleID {
+                // A moment for the window to come forward before pressing the chat's row.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    MainActor.assumeIsolated { AppDelegate.shared.openChat(bundleID: b, title: chat) }
+                }
+            }
         }
         // Opening is not reading: the chat counts as looked at after a real visit (see `tickVisits`).
         if announcing == id { announcing = nil }
@@ -204,7 +211,14 @@ final class Store: ObservableObject {
     func openLatestDone() {
         let unread = apps.compactMap { t in t.newestUnread.map { (t.id, $0.at) } }
         let waiting = apps.compactMap { t in t.waiting.last.map { (t.id, $0.at) } }
-        if let latest = (unread.isEmpty ? waiting : unread).max(by: { $0.1 < $1.1 }) { open(latest.0) }
+        if let latest = (unread.isEmpty ? waiting : unread).max(by: { $0.1 < $1.1 }) {
+            open(latest.0, chat: chatToOpen(app(latest.0)!))
+        }
+    }
+
+    /// The chat a click on the app's tile means: the newest one waiting on you, or the one running.
+    func chatToOpen(_ t: Tracked) -> String? {
+        t.newestUnread?.title ?? t.waiting.last?.title ?? (t.sessions.count == 1 ? t.sessions[0].title : nil)
     }
 
     /// Done with a waiting chat: it leaves the strip. `title` nil clears all of the app's.

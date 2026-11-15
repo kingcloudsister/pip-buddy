@@ -9,6 +9,7 @@ struct BubbleContent {
     var detail: String?
     var cta: String?
     var tapID: String?
+    var tapChat: String?        // the chat to open in that app
     var centerY: CGFloat    // from the top of the pill window
 
     @MainActor
@@ -48,7 +49,7 @@ struct BubbleContent {
                                  badge: store.announceNudge ? Store.turnBadge : ("READY", Theme.readyBg, Theme.readyFg),
                                  detail: store.announceNudge ? title + (w?.last.map { " · Last: " + $0 } ?? "")
                                                              : (w.map(store.waitingDetail) ?? store.cardDetail(t)),
-                                 cta: "Tap back", tapID: a,
+                                 cta: "Tap back", tapID: a, tapChat: title,
                                  centerY: store.collapsed ? Theme.mascotCenter : Theme.rowCenter(i))
         }
         return nil

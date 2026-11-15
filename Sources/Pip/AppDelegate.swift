@@ -20,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hooks.start()
     }
 
+    func openChat(bundleID: String, title: String) { watcher.openChat(bundleID: bundleID, title: title) }
+
     func copyDiagnostics() {
         watcher.diagnostics { text in
             NSPasteboard.general.clearContents()

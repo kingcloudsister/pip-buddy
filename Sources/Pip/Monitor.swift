@@ -63,7 +63,7 @@ struct MonitorView: View {
         if let id = store.announcing, let t = store.app(id) {
             let title = store.announceTitle ?? store.cardTitle(t)
             ToastView(icon: t.icon, title: store.announceNudge ? "Still waiting on you: " + title : title + " is ready!",
-                      note: t.waiting.last { $0.title == title }?.last) { store.open(id) }
+                      note: t.waiting.last { $0.title == title }?.last) { store.open(id, chat: title) }
                 .padding(12)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
@@ -87,16 +87,16 @@ struct ChatList: View {
                     ForEach(t.waiting.reversed(), id: \.title) { w in
                         Card(title: w.title, detail: store.waitingDetail(w), icon: t.icon,
                              badge: w.read ? Store.turnBadge : ("READY", Theme.readyBg, Theme.readyFg),
-                             quiet: w.read) { store.open(t.id) }
+                             quiet: w.read) { store.open(t.id, chat: w.title) }
                             .contextMenu {
-                                Button("Open \(t.name)") { store.open(t.id) }
+                                Button("Open This Chat") { store.open(t.id, chat: w.title) }
                                 Button("Done with This") { store.dismiss(t.id, title: w.title) }
                             }
                     }
                     if !t.sessions.isEmpty {
                         ForEach(t.sessions, id: \.title) { s in
                             Card(title: s.title, detail: store.sessionDetail(s), icon: t.icon,
-                                 badge: ("WORKING", Theme.workingBg, Theme.workingFg)) { store.open(t.id) }
+                                 badge: ("WORKING", Theme.workingBg, Theme.workingFg)) { store.open(t.id, chat: s.title) }
                                 .contextMenu { appMenu(t) }
                         }
                     } else if t.isWorking {
