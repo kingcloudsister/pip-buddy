@@ -1,0 +1,97 @@
+import SwiftUI
+
+/// What slides out of the strip right now: a hover label, or the card of a chat that just finished.
+struct BubbleContent {
+    var key: String
+    var icon: NSImage?
+    var title: String
+    var badge: Badge?
+    var detail: String?
+    var cta: String?
+    var tapID: String?
+    var centerY: CGFloat    // from the top of the pill window
+
+    @MainActor
+    static func current(_ store: Store) -> BubbleContent? {
+        if let h = store.hovered {
+            switch h {
+            case "pip:mascot":
+                let done = store.apps.filter(\.unseen).count
+                let working = store.apps.filter(\.isWorking).count
+                var parts: [String] = []
+                if done > 0 { parts.append("\(done) ready") }
+                if working > 0 { parts.append("\(working) working") }
+                return BubbleContent(key: h, title: "Pip", detail: parts.isEmpty ? "All quiet… zzz" : parts.joined(separator: " · "),
+                                     cta: "Click to see all chats", centerY: Theme.mascotCenter)
+            case "pip:access":
+                return BubbleContent(key: h, title: "Let Pip see your chats", badge: ("SETUP", Theme.readyBg, Theme.readyFg),
+                                     detail: "Allow Pip in Accessibility settings", cta: "Click to allow",
+                                     centerY: Theme.rowCenter(store.apps.count))
+            default:
+                guard let i = store.apps.firstIndex(where: { $0.id == h }) else { return nil }
+                let t = store.apps[i]
+                return BubbleContent(key: h, icon: t.icon, title: store.cardTitle(t), badge: store.badge(t),
+                                     detail: store.cardDetail(t), centerY: Theme.rowCenter(i))
+            }
+        }
+        if let a = store.announcing, let i = store.apps.firstIndex(where: { $0.id == a }) {
+            let t = store.apps[i]
+            return BubbleContent(key: "done:" + a, icon: t.icon, title: store.cardTitle(t), badge: ("READY", Theme.readyBg, Theme.readyFg),
+                                 detail: store.cardDetail(t), cta: "Tap back", tapID: a, centerY: Theme.rowCenter(i))
+        }
+        return nil
+    }
+}
+
+/// One card from the panel on its own. Its edge next to the strip tucks under it, so it slides out from behind.
+struct PopCard: View {
+    static let shadowPad: CGFloat = 12
+
+    let content: BubbleContent
+    let onRight: Bool           // the strip is on the right edge of the screen
+    var wrapWidth: CGFloat?     // set when the text is too long for one line
+    let onTap: () -> Void
+    @State private var shown = false
+
+    var body: some View {
+        let c = content
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        HStack(alignment: .top, spacing: 10) {
+            if let icon = c.icon {
+                Image(nsImage: icon).resizable().interpolation(.high).frame(width: 22, height: 22).padding(.top, 1)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(c.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+                    if wrapWidth != nil { Spacer(minLength: 0) }
+                    if let b = c.badge { BadgeLabel(badge: b) }
+                }
+                if let d = c.detail, !d.isEmpty {
+                    Text(d).font(.system(size: 11.5)).foregroundStyle(Theme.muted).lineLimit(2)
+                }
+                if let cta = c.cta {
+                    Text(cta).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.tapBackInk)
+                        .underline(true, color: Theme.tapBackInk.opacity(0.5)).padding(.top, 1)
+                }
+            }
+            .frame(width: wrapWidth, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .padding(onRight ? .trailing : .leading, Theme.tuck)
+        .background(
+            shape.fill(Color.white)
+                .overlay(shape.strokeBorder(Theme.hairline, lineWidth: 1))
+                .shadow(color: .black.opacity(0.13), radius: 8, y: 3)
+        )
+        .padding(Self.shadowPad)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+        .offset(x: shown ? 0 : (onRight ? 40 : -40))
+        .opacity(shown ? 1 : 0)
+        .onAppear {
+            withAnimation(.spring(response: 0.32, dampingFraction: c.tapID == nil ? 0.9 : 0.68)) { shown = true }
+        }
+    }
+}
