@@ -26,6 +26,12 @@ struct BubbleContent {
                 if working > 0 { parts.append("\(working) working") }
                 return BubbleContent(key: h, title: "Pip", detail: parts.isEmpty ? "All quiet… zzz" : parts.joined(separator: " · "),
                                      cta: "Click to see all chats", centerY: Theme.mascotCenter)
+            case "pip:update":
+                let i = store.visibleApps.count + (store.axTrusted ? 0 : 1)
+                return BubbleContent(key: h, title: store.updating ? "Updating…" : "Update available",
+                                     badge: ("NEW", Theme.workingBg, Theme.workingFg),
+                                     detail: "Pip \(store.update ?? "") · you have \(Updater.shared.current)",
+                                     cta: store.updating ? nil : "Click to install", centerY: Theme.rowCenter(i))
             case "pip:access":
                 return BubbleContent(key: h, title: "Let Pip see your chats", badge: ("SETUP", Theme.readyBg, Theme.readyFg),
                                      detail: "Allow Pip in Accessibility settings", cta: "Click to allow",

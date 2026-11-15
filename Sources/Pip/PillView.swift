@@ -19,6 +19,7 @@ struct PillView: View {
                 rows {
                     ForEach(store.visibleApps) { AppRow(app: $0, store: store) }
                     if !store.axTrusted { AccessRow(store: store) }
+                    if store.update != nil { UpdateRow(store: store) }
                     AddButton(store: store)
                 }
             }
@@ -195,6 +196,27 @@ private struct AccessRow: View {
     }
 }
 
+/// Shown when a newer Pip is out: click to download, check, and install it.
+private struct UpdateRow: View {
+    @ObservedObject var store: Store
+    var body: some View {
+        let flat = store.edge.horizontal
+        ZStack {
+            Tile(fill: Theme.workingBg)
+            if store.updating {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "arrow.down").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.ink)
+            }
+        }
+        .scaleEffect(store.hovered == "pip:update" ? 1.06 : 1)
+        .frame(width: flat ? Theme.row : Theme.pillWidth, height: flat ? Theme.pillWidth : Theme.row)
+        .contentShape(Rectangle())
+        .onHover { store.setHover("pip:update", $0) }
+        .onTapGesture { Updater.shared.install() }
+    }
+}
+
 private struct AddButton: View {
     @ObservedObject var store: Store
     var body: some View {
@@ -259,6 +281,13 @@ struct PipMenu: View {
         if !store.axTrusted {
             Button("Allow Accessibility…") { store.requestAccess(openSettings: true) }
         }
+        Divider()
+        if let v = store.update {
+            Button("Update to Pip \(v)") { Updater.shared.install() }
+        }
+        Button("Check for Updates…") { Task { await Updater.shared.check(quietly: false) } }
+        Toggle("Check for Updates Automatically", isOn: Binding(get: { Updater.shared.automatic },
+                                                                set: { Updater.shared.automatic = $0 }))
         Divider()
         Button("Copy Detection Report") { AppDelegate.shared.copyDiagnostics() }
         Button("Copy Hook Example") { AppDelegate.shared.copyHookExample() }

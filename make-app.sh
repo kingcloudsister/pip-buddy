@@ -12,11 +12,18 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Pip"
 cp Info.plist "$APP/Contents/Info.plist"
 if [ -f AppIcon.icns ]; then cp AppIcon.icns "$APP/Contents/Resources/"; fi
-# Sign with a real certificate when there is one: macOS then keeps Pip's Accessibility permission
-# across rebuilds. Ad-hoc signing ("-") works too, but every rebuild has to be allowed again.
-# Picked by fingerprint: an expired certificate with the same name would make the name ambiguous.
-SIGN_ID="${PIP_SIGN_ID:-$(security find-identity -p codesigning -v 2>/dev/null | sed -n 's/^ *[0-9]*) \([0-9A-F]\{40\}\) "Apple Development:.*/\1/p' | head -1)}"
-codesign --force --sign "${SIGN_ID:--}" "$APP"
-echo "Signed with: ${SIGN_ID:-ad-hoc}"
+# Version: VERSION=1.2.0 ./make-app.sh stamps it into the app (release.sh does this).
+if [ -n "${VERSION:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
+fi
+# Signing: the self-signed "Pip Buddy" key when this Mac has it (see RELEASING.md), so macOS keeps Pip's
+# Accessibility permission across updates and Pip can check that an update really came from that key.
+# Personal certificates (Apple Development) are never used: they carry their owner's name and email.
+# Without the key, the app is signed ad-hoc, which works but needs Accessibility re-allowed per build.
+SIGN_ID="${PIP_SIGN_ID:-$(security find-identity -p codesigning 2>/dev/null | sed -n 's/^ *[0-9]*) \([0-9A-F]\{40\}\) "Pip Buddy".*/\1/p' | head -1)}"
+codesign --force --timestamp=none --sign "${SIGN_ID:--}" "$APP"
+if [ -n "$SIGN_ID" ]; then echo "Signed with: Pip Buddy key"; else echo "Signed with: ad-hoc"; fi
+if codesign -dvv "$APP" 2>&1 | grep -qi '@'; then echo "Refusing: the signature contains an email address" >&2; exit 1; fi
 ditto -c -k --keepParent "$APP" build/Pip.zip
 echo "Built $APP and build/Pip.zip"

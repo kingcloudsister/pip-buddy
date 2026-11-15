@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { Store.shared.hook(path, query) }
         }
         hooks.start()
+        Updater.shared.start()
     }
 
     func openChat(bundleID: String, title: String) { watcher.openChat(bundleID: bundleID, title: title) }

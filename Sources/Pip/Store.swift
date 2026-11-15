@@ -64,6 +64,8 @@ final class Store: ObservableObject {
     @Published var announceNudge = false    // "still waiting on you" rather than "ready"
     @Published var hovered: String?
     @Published var panelOpen = false
+    @Published var update: String?          // a newer Pip version is available
+    @Published var updating = false
     @Published var axTrusted = AXIsProcessTrusted()
     @Published var runningChanged = 0
     /// The edge the strip sits on. Older settings only knew left or right.
