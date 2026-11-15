@@ -87,3 +87,7 @@ cp -R build/Pip.app /Applications/
 ```
 
 A copy you build yourself is signed ad-hoc, so it can't install release updates (they're checked against Pip's release key), and macOS asks for Accessibility again after each rebuild. To publish releases, see [RELEASING.md](RELEASING.md).
+
+## License
+
+[MIT](LICENSE). The name "Pip" and its icon are not part of the license grant.
