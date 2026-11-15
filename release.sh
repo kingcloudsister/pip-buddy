@@ -27,7 +27,7 @@ VERSION="$V" ./make-app.sh
 # What ships must carry nothing about the person building it.
 SIG=$(codesign -dvv build/Pip.app 2>&1)
 echo "$SIG" | grep -q 'Authority=Pip Buddy' || { echo "Not signed with the Pip Buddy key." >&2; exit 1; }
-if echo "$SIG" | grep -qi '@' || strings -a build/Pip.app/Contents/MacOS/Pip | grep -q -i -E "/Users/|$(whoami)"; then
+if echo "$SIG" | grep -qi '@' || LC_ALL=C grep -r -a -q -i -E "/Users/[A-Za-z0-9]|$(whoami)" build/Pip.app; then
   echo "The build contains a path, user name or email; not publishing." >&2; exit 1
 fi
 
