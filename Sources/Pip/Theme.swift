@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// Which screen edge the strip hugs. Along the top it lies flat and cards drop down from it.
+enum PipEdge: String, CaseIterable {
+    case left, right, top
+    var horizontal: Bool { self == .top }
+    var label: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+}
+
 /// Pip's one look, taken from the Buddy Monitor mockup: warm sand and tan, white cards with warm hairlines,
 /// near-black ink, tracked uppercase labels, and a square face drawn in ink.
 enum Theme {
@@ -42,7 +49,9 @@ enum Theme {
     static let rowGap: CGFloat = 0
     static let tuck: CGFloat = pillWidth / 2   // how far cards and the panel reach under the strip
 
-    /// Vertical center of row `i`, measured from the top of the strip window.
+    static let handle: CGFloat = 20     // the minimize chevron at the end of the strip
+
+    /// Center of row `i` along the strip, measured from its top (or its left edge when it lies along the top).
     static func rowCenter(_ i: Int) -> CGFloat {
         margin + pad + mascot + gap + CGFloat(i) * (row + rowGap) + row / 2
     }

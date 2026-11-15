@@ -2,8 +2,8 @@
 
 A tiny floating pill for the edge of your Mac screen. It watches your AI chat apps (Claude, Amp, Grok, ChatGPT, or anything you add), pops a bubble when one finishes while you are somewhere else, and lets you jump back with one click.
 
-- **Pip (the face)** is a little square face at the top of the strip: eyes closed when nothing runs, watching with a waving antenna while an app is thinking, and smiling with a hop when something is done. Click it and the monitor panel slides out from behind the strip: one card per app with its chat title and a Working or Ready badge. The arrow in the panel hops to the newest finished chat and the gear opens settings. Click a card to switch to it; click anywhere else to tuck the panel away. When a chat finishes while the panel is closed, only that chat's card slides out next to its icon, with Tap back. Drag it to either screen edge. Right-click for settings.
-- **Rows** are your apps that are open right now; quit an app and its row goes away until you open it again. Three hopping dots mean working; a small number means several chats are running in that app at once; a pink dot means finished and not seen yet. Hover for each chat's title and what it is doing now ("Now: Running the tests · 4 min"); click to switch.
+- **Pip (the face)** is a little square face at the top of the strip: eyes closed when nothing runs, watching with a waving antenna while an app is thinking, and smiling with a hop when something is done. Click it and the monitor panel slides out from behind the strip: one card per app with its chat title and a Working or Ready badge. The arrow in the panel hops to the newest finished chat and the gear opens settings. Click a card to switch to it; click anywhere else to tuck the panel away. When a chat finishes while the panel is closed, only that chat's card slides out next to its icon, with Tap back. Drag it by any part of the strip; it snaps to the nearest edge: left, right, or the top of the screen, where it lies flat and cards drop down from it. The small chevron at the end folds it down to just the face (a pink dot on the face means something finished). Right-click for settings, Minimize to Face, and Move To.
+- **Rows** are only the apps in the middle of something, or that just finished and you haven't looked yet; open but quiet apps stay hidden, so most of the time the strip is just the face. Three hopping dots mean working; a small number means several chats are running in that app at once; a pink dot means finished and not seen yet. Hover for each chat's title and what it is doing now ("Now: Running the tests · 4 min"); click to switch.
 - **+** adds any open app, or any app from /Applications.
 
 ## Install
@@ -25,6 +25,17 @@ xattr -dr com.apple.quarantine /Applications/Pip.app
 On first launch, allow Pip in **System Settings → Privacy & Security → Accessibility**. Pip reads other apps' buttons through it; nothing leaves your Mac.
 
 `make-app.sh` signs with your **Apple Development** certificate when the keychain has one (or `PIP_SIGN_ID`), so the permission survives rebuilds. With ad-hoc signing every rebuild counts as a new app: remove the old Pip entry in Accessibility and add the new one.
+
+## Ready, then your turn
+
+A finished chat stays on the strip until you pick it back up, so a quick look doesn't make it vanish:
+
+- **Ready** (pink dot, READY card): it finished and you haven't looked yet.
+- **Your turn** (dashed tile, hollow ring): you spent at least 15 seconds in that app (for Claude, on that chat), then left. The card keeps the chat's name, the last thing it did, and how long it has waited.
+- After 10 minutes away, Pip nudges once: "Still waiting on you".
+- It leaves when that chat runs again (you replied), when you right-click → **Done with This**, or after 8 hours.
+
+Every change is logged to `~/Library/Logs/Pip.log` (names and states only) so a missed finish can be traced.
 
 ## How it knows an app is done
 

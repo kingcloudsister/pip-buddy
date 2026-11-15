@@ -17,6 +17,17 @@ struct Session: Equatable {
     var step: String?           // what it is doing now, when it is the one on screen
 }
 
+/// A finished chat that still needs you: "ready" until you have looked at it, then "your turn" until you
+/// reply (it runs again), dismiss it, or it gets old.
+struct Waiting: Equatable {
+    var title: String
+    var last: String?           // the last thing it was doing, so you remember where it stood
+    var at = Date()             // when it finished
+    var read = false            // you spent a real look at it (not just a glance)
+    var since: Date?            // when you left it after reading: the clock for the nudge
+    var nudged = false
+}
+
 struct Tracked: Identifiable, Equatable {
     let id: String              // bundle ID, or "hook:<name>" for apps that report through the local hook
     var name: String
@@ -24,16 +35,22 @@ struct Tracked: Identifiable, Equatable {
     var openBundleID: String?   // hook entries: the app to bring forward on click
     var icon: NSImage
     var status: Status = .idle
-    var unseen = false          // finished while you were elsewhere and you have not looked yet
+    var waiting: [Waiting] = [] // finished chats that still need you, oldest first
+    var listsChats = false      // the app names its running chats (Claude's sidebar), so finishes are per chat
+    var focused: String?        // the chat open on screen in that app, when it says
     var title: String?          // front window title, usually the conversation name
     var note: String?           // message sent with a hook
     var sessions: [Session] = []    // conversations the app lists as running, when it shows them (Claude's sidebar)
     var step: String?               // what the app says it is doing, when it is not tied to a listed conversation
-    var lastDone: String?       // the conversation that finished most recently
 }
 
 extension Tracked {
     var isWorking: Bool { if case .working = status { return true }; return false }
+    /// Finished and not looked at yet.
+    var unseen: Bool { waiting.contains { !$0.read } }
+    /// Looked at, but you have not picked it back up.
+    var yourTurn: Bool { !waiting.isEmpty && !unseen }
+    var newestUnread: Waiting? { waiting.last { !$0.read } }
 }
 
 /// Everything the pill and bubble show. Main thread only.
@@ -43,15 +60,32 @@ final class Store: ObservableObject {
 
     @Published var apps: [Tracked] = []
     @Published var announcing: String?
+    @Published var announceTitle: String?   // the chat the card is about
+    @Published var announceNudge = false    // "still waiting on you" rather than "ready"
     @Published var hovered: String?
     @Published var panelOpen = false
     @Published var axTrusted = AXIsProcessTrusted()
     @Published var runningChanged = 0
+    /// The edge the strip sits on. Older settings only knew left or right.
+    @Published var edge: PipEdge = PipEdge(rawValue: UserDefaults.standard.string(forKey: "pillEdge") ?? "")
+        ?? ((UserDefaults.standard.object(forKey: "pillOnRight") as? Bool ?? true) ? .right : .left) {
+        didSet { UserDefaults.standard.set(edge.rawValue, forKey: "pillEdge") }
+    }
+    /// Folded down to just the face.
+    @Published var collapsed = UserDefaults.standard.bool(forKey: "collapsed") {
+        didSet { UserDefaults.standard.set(collapsed, forKey: "collapsed") }
+    }
     @Published var soundOn = UserDefaults.standard.object(forKey: "sound") as? Bool ?? true {
         didSet { UserDefaults.standard.set(soundOn, forKey: "sound") }
     }
 
     private var misses: [String: Int] = [:]
+    private var visitStart: [String: Date] = [:]
+    // Shorter visits do not count as having looked; away this long with a chat waiting on you: one reminder.
+    // Both can be shortened for testing: defaults write dev.pipbuddy.pip glanceSeconds/nudgeSeconds <n>.
+    static var glance: TimeInterval { UserDefaults.standard.object(forKey: "glanceSeconds") as? Double ?? 15 }
+    static var nudgeAfter: TimeInterval { UserDefaults.standard.object(forKey: "nudgeSeconds") as? Double ?? 10 * 60 }
+    static let forgetAfter: TimeInterval = 8 * 3600
     private var sessionMisses: [String: Int] = [:]   // "<app id>\n<title>": polls a running conversation has been missing
     private var badges: [String: String] = [:]
     private var hideAnnouncement: DispatchWorkItem?
@@ -161,30 +195,64 @@ final class Store: ObservableObject {
             config.activates = true
             NSWorkspace.shared.openApplication(at: url, configuration: config)
         }
-        markSeen(id)
+        // Opening is not reading: the chat counts as looked at after a real visit (see `tickVisits`).
+        if announcing == id { announcing = nil }
         panelOpen = false
     }
 
-    /// Opens the app that finished most recently and is still unread.
+    /// Opens the newest unread finished chat, or else the newest one waiting on you.
     func openLatestDone() {
-        let latest = apps.filter(\.unseen).max { a, b in doneDate(a) < doneDate(b) }
-        if let latest { open(latest.id) }
+        let unread = apps.compactMap { t in t.newestUnread.map { (t.id, $0.at) } }
+        let waiting = apps.compactMap { t in t.waiting.last.map { (t.id, $0.at) } }
+        if let latest = (unread.isEmpty ? waiting : unread).max(by: { $0.1 < $1.1 }) { open(latest.0) }
     }
 
-    private func doneDate(_ t: Tracked) -> Date {
-        if case .done(let at) = t.status { return at }
-        return .distantPast
-    }
-
-    func markSeen(_ id: String) {
+    /// Done with a waiting chat: it leaves the strip. `title` nil clears all of the app's.
+    func dismiss(_ id: String, title: String? = nil) {
         guard let i = apps.firstIndex(where: { $0.id == id }) else { return }
-        apps[i].unseen = false
-        if announcing == id { announcing = nil }
+        apps[i].waiting.removeAll { title == nil || $0.title == title }
+        if announcing == id, apps[i].waiting.isEmpty { announcing = nil }
     }
 
     private func appActivated(_ bundleID: String?) {
         guard let bundleID else { return }
-        for t in apps where t.bundleID == bundleID || t.openBundleID == bundleID { markSeen(t.id) }
+        for t in apps where (t.bundleID == bundleID || t.openBundleID == bundleID) && announcing == t.id { announcing = nil }
+    }
+
+    /// Runs every poll. Time spent in an app turns its finished chats from "ready" into "your turn";
+    /// leaving starts the clock for one reminder; old ones are let go.
+    private func tickVisits() {
+        let now = Date()
+        for i in apps.indices {
+            let id = apps[i].id
+            let here = isFrontmost(apps[i])
+            if here {
+                let start = visitStart[id] ?? now
+                visitStart[id] = start
+                if now.timeIntervalSince(start) >= Self.glance {
+                    for k in apps[i].waiting.indices where !apps[i].waiting[k].read {
+                        // In an app that lists chats, only the chat on screen counts as looked at.
+                        if apps[i].listsChats, let f = apps[i].focused, apps[i].waiting[k].title != f { continue }
+                        apps[i].waiting[k].read = true
+                        Self.log("\(apps[i].name): looked at \"\(apps[i].waiting[k].title)\" (your turn)")
+                    }
+                }
+                for k in apps[i].waiting.indices where apps[i].waiting[k].since != nil { apps[i].waiting[k].since = nil }
+            } else if visitStart.removeValue(forKey: id) != nil {
+                for k in apps[i].waiting.indices where apps[i].waiting[k].read && apps[i].waiting[k].since == nil {
+                    apps[i].waiting[k].since = now
+                }
+            }
+            for k in apps[i].waiting.indices.reversed() {
+                let w = apps[i].waiting[k]
+                if now.timeIntervalSince(w.at) > Self.forgetAfter { apps[i].waiting.remove(at: k); continue }
+                if w.read, !w.nudged, !here, let s = w.since, now.timeIntervalSince(s) >= Self.nudgeAfter {
+                    apps[i].waiting[k].nudged = true
+                    Self.log("\(apps[i].name): nudge for \"\(w.title)\"")
+                    announce(id, title: w.title, nudge: true)
+                }
+            }
+        }
     }
 
     private func isFrontmost(_ t: Tracked) -> Bool {
@@ -211,17 +279,24 @@ final class Store: ObservableObject {
                 if apps[i].title != title { apps[i].title = title }
             }
 
+            if p.sessions != nil, !apps[i].listsChats { apps[i].listsChats = true }
+            if apps[i].focused != p.focused, p.sessions != nil { apps[i].focused = p.focused }
             let ended = p.sessions.map { updateSessions(i, $0) } ?? []
             if p.sessions != nil || p.step != nil { placeStep(i, p.step, focused: p.focused) }
+            // A chat that runs again has been picked back up.
+            for s in apps[i].sessions { apps[i].waiting.removeAll { $0.title == s.title } }
             if p.working || !apps[i].sessions.isEmpty {
                 misses[id] = 0
-                if case .working = apps[i].status {} else { apps[i].status = .working(since: Date()) }
+                if case .working = apps[i].status {} else {
+                    apps[i].status = .working(since: Date())
+                    if !apps[i].listsChats { apps[i].waiting.removeAll() }
+                }
                 // One conversation finished while others are still going.
-                if let last = ended.last { finishSession(i, last) }
+                for s in ended { finishSession(i, s) }
             } else if case .working = apps[i].status {
-                if let last = ended.last {
-                    apps[i].lastDone = last
-                    finish(id, note: nil)
+                if !ended.isEmpty {
+                    for s in ended.dropLast() { finishSession(i, s) }
+                    finish(id, note: nil, chat: ended.last)
                 } else {
                     // Two quiet polls in a row so a brief flicker of the stop button is not a false "done".
                     misses[id, default: 0] += 1
@@ -229,6 +304,7 @@ final class Store: ObservableObject {
                 }
             }
             if !apps[i].isWorking, apps[i].step != nil { apps[i].step = nil }
+            logChange(apps[i], p)
 
             // A new or bigger Dock badge also means something finished.
             let badge = p.badge ?? ""
@@ -237,20 +313,50 @@ final class Store: ObservableObject {
             }
             badges[id] = badge
         }
+        tickVisits()
+    }
+
+    // MARK: Log
+
+    private var lastLogged: [String: String] = [:]
+
+    /// One line per change in what Pip sees, in ~/Library/Logs/Pip.log, for finding out why something was missed.
+    /// Stays on this Mac; holds app names, chat titles and states, no message text.
+    private func logChange(_ t: Tracked, _ p: Probe) {
+        let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+        let state = "\(t.isWorking ? "working" : t.unseen ? "ready" : "quiet") stop=\(p.working ? 1 : 0) "
+            + "chats=[\(t.sessions.map(\.title).joined(separator: "; "))] read=\(p.sessions == nil ? "quick" : "full")"
+        let key = state.replacingOccurrences(of: " read=quick", with: "").replacingOccurrences(of: " read=full", with: "")
+        guard lastLogged[t.id] != key else { return }
+        lastLogged[t.id] = key
+        Self.log("\(t.name): \(state) front=\(front)")
+    }
+
+    nonisolated static func log(_ line: String) {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Pip.log")
+        let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullTime, .withFullDate, .withSpaceBetweenDateAndTime])
+        let data = Data((stamp + "  " + line + "\n").utf8)
+        if let h = try? FileHandle(forWritingTo: url) {
+            if (try? h.seekToEnd()) ?? 0 > 2_000_000 { try? h.truncate(atOffset: 0) }
+            try? h.write(contentsOf: data)
+            try? h.close()
+        } else {
+            try? data.write(to: url)
+        }
     }
 
     /// Takes the conversations the app lists as running now; returns the ones that have finished.
     /// A conversation must be missing from two reads in a row, so a list that redraws is not a false "done".
-    private func updateSessions(_ i: Int, _ now: [String]) -> [String] {
+    private func updateSessions(_ i: Int, _ now: [String]) -> [Session] {
         let id = apps[i].id
         let old = apps[i].sessions
         var keep: [Session] = now.map { title in old.first { $0.title == title } ?? Session(title: title) }
-        var ended: [String] = []
+        var ended: [Session] = []
         for title in now { sessionMisses[id + "\n" + title] = nil }
         for s in old where !now.contains(s.title) {
             let key = id + "\n" + s.title
             sessionMisses[key, default: 0] += 1
-            if sessionMisses[key]! >= 2 { sessionMisses[key] = nil; ended.append(s.title) } else { keep.append(s) }
+            if sessionMisses[key]! >= 2 { sessionMisses[key] = nil; ended.append(s) } else { keep.append(s) }
         }
         if apps[i].sessions != keep { apps[i].sessions = keep }
         return ended
@@ -266,11 +372,19 @@ final class Store: ObservableObject {
         }
     }
 
-    private func finishSession(_ i: Int, _ title: String) {
-        apps[i].lastDone = title
+    /// One chat finished while the app may still be busy with others.
+    private func finishSession(_ i: Int, _ s: Session) {
+        addWaiting(i, Waiting(title: s.title, last: s.step))
+    }
+
+    /// Adds a finished chat. Announced unless you are already in that app, where you will see it yourself;
+    /// either way it stays until you have really looked and then picked it back up.
+    private func addWaiting(_ i: Int, _ w: Waiting) {
+        apps[i].waiting.removeAll { $0.title == w.title }
+        apps[i].waiting.append(w)
+        Self.log("\(apps[i].name): finished \"\(w.title)\"\(w.last.map { " (last: \($0))" } ?? "")")
         guard !isFrontmost(apps[i]) else { return }
-        apps[i].unseen = true
-        announce(apps[i].id)
+        announce(apps[i].id, title: w.title, nudge: false)
     }
 
     /// Local hook: GET /done, /working, /idle with ?app=Name[&note=...][&open=bundle.id]
@@ -283,11 +397,12 @@ final class Store: ObservableObject {
         case "/working":
             apps[i].status = .working(since: Date())
             apps[i].note = q["note"]
+            apps[i].waiting.removeAll()
         case "/done":
             finish(id, note: q["note"])
         case "/idle":
             apps[i].status = .idle
-            apps[i].unseen = false
+            apps[i].waiting.removeAll()
             if announcing == id { announcing = nil }
         default:
             return false
@@ -328,19 +443,20 @@ final class Store: ObservableObject {
         }
     }()
 
-    private func finish(_ id: String, note: String?) {
+    private func finish(_ id: String, note: String?, chat: Session? = nil) {
         guard let i = apps.firstIndex(where: { $0.id == id }) else { return }
         misses[id] = 0
+        let step = chat?.step ?? apps[i].step
         apps[i].status = .done(at: Date())
         if let note { apps[i].note = note }
-        // Stay quiet when you are already looking at it.
-        guard !isFrontmost(apps[i]) else { return }
-        apps[i].unseen = true
-        announce(id)
+        let title = chat?.title ?? workingTitle(apps[i])
+        addWaiting(i, Waiting(title: title, last: note ?? step))
     }
 
-    private func announce(_ id: String) {
+    private func announce(_ id: String, title: String?, nudge: Bool) {
         announcing = id
+        announceTitle = title
+        announceNudge = nudge
         if soundOn { NSSound(named: "Pop")?.play() }
         hideAnnouncement?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -383,10 +499,10 @@ final class Store: ObservableObject {
         }
     }
 
-    /// What the strip and panel show: apps that are open, and script-reported rows while they have news.
+    /// What the strip and panel show: only apps in the middle of something, or that just finished and
+    /// you have not looked at yet. Open but quiet apps stay out of the way.
     var visibleApps: [Tracked] {
-        _ = runningChanged
-        return apps.filter { t in t.bundleID == nil ? (t.isWorking || t.unseen) : isRunning(t) }
+        apps.filter { $0.isWorking || !$0.waiting.isEmpty }
     }
 
     func isRunning(_ t: Tracked) -> Bool {
@@ -400,6 +516,7 @@ final class Store: ObservableObject {
         case .working: return "working…"
         case .done(let at):
             if t.unseen { return "done · tap to see" }
+            if t.yourTurn { return "your turn" }
             let f = RelativeDateTimeFormatter()
             f.unitsStyle = .short
             return "done " + f.localizedString(for: at, relativeTo: Date())
@@ -412,6 +529,8 @@ final class Store: ObservableObject {
 
     func badge(_ t: Tracked) -> Badge {
         if t.unseen { return ("READY", Theme.readyBg, Theme.readyFg) }
+        if t.isWorking { return ("WORKING", Theme.workingBg, Theme.workingFg) }
+        if t.yourTurn { return Self.turnBadge }
         switch t.status {
         case .working: return ("WORKING", Theme.workingBg, Theme.workingFg)
         case .done: return ("DONE", Theme.quietBg, Theme.quietFg)
@@ -420,16 +539,22 @@ final class Store: ObservableObject {
     }
 
     var activeSummary: String {
-        let n = visibleApps.reduce(0) { n, t in n + max(t.sessions.count + (t.unseen ? 1 : 0), t.unseen || t.isWorking ? 1 : 0) }
+        let n = visibleApps.reduce(0) { n, t in n + t.waiting.count + max(t.sessions.count, t.isWorking ? 1 : 0) }
         return n == 0 ? "ALL QUIET" : n == 1 ? "1 CHAT ACTIVE" : "\(n) CHATS ACTIVE"
     }
 
     /// The conversation's name: the one that just finished, the ones running, or the window title.
     func cardTitle(_ t: Tracked) -> String {
-        if t.unseen, let done = t.lastDone { return done }
+        if let w = t.newestUnread { return w.title }
+        if t.isWorking { return workingTitle(t) }
+        if let w = t.waiting.last { return w.title }
+        return workingTitle(t)
+    }
+
+    /// The running chat's name, "Claude · 2 chats", the window title, or the app's name.
+    func workingTitle(_ t: Tracked) -> String {
         if t.sessions.count == 1 { return t.sessions[0].title }
         if t.sessions.count > 1 { return "\(t.name) · \(t.sessions.count) chats" }
-        if case .done = t.status, let done = t.lastDone { return done }
         if let title = t.title, !title.isEmpty, title != t.name { return title }
         return t.name
     }
@@ -441,28 +566,44 @@ final class Store: ObservableObject {
         return minutes < 1 ? "Working on it…" : "Working for \(minutes) min"
     }
 
-    func cardDetail(_ t: Tracked) -> String {
-        if let note = t.note, !note.isEmpty { return note }
-        let what: String
-        switch t.status {
-        case .working where t.unseen && !t.sessions.isEmpty:
-            what = t.sessions.count == 1 ? "\(t.sessions[0].title) still running" : "\(t.sessions.count) more still running"
-        case .working where t.sessions.count > 1:
+    func workingDetail(_ t: Tracked) -> String {
+        if t.sessions.count > 1 {
             return t.sessions.map { "• " + $0.title + ($0.step.map { " — " + $0 } ?? "") }.joined(separator: "\n")
-        case .working where t.sessions.count == 1:
-            return sessionDetail(t.sessions[0])
-        case .working(let since) where t.step != nil:
-            what = "now: " + t.step! + (Date().timeIntervalSince(since) >= 60 ? " · \(Int(Date().timeIntervalSince(since) / 60)) min" : "")
-        case .working(let since):
-            let minutes = Int(Date().timeIntervalSince(since) / 60)
-            what = minutes < 1 ? "working on it…" : "working for \(minutes) min"
-        case .done(let at):
-            let f = RelativeDateTimeFormatter()
-            f.unitsStyle = .full
-            what = "finished " + f.localizedString(for: at, relativeTo: Date())
-        case .idle:
-            what = isRunning(t) ? "waiting for you" : "not open"
         }
-        return cardTitle(t) == t.name ? what.prefix(1).uppercased() + what.dropFirst() : "\(t.name) · \(what)"
+        if t.sessions.count == 1 { return sessionDetail(t.sessions[0]) }
+        if let note = t.note, !note.isEmpty { return note }
+        guard case .working(let since) = t.status else { return "" }
+        let minutes = Int(Date().timeIntervalSince(since) / 60)
+        if let step = t.step { return "Now: " + step + (minutes >= 1 ? " · \(minutes) min" : "") }
+        return minutes < 1 ? "Working on it…" : "Working for \(minutes) min"
+    }
+
+    /// Where a finished chat stood, and how long it has waited: "Last: Pushed the fix · waiting 12 min".
+    func waitingDetail(_ w: Waiting) -> String {
+        var parts: [String] = []
+        if w.nudged { parts.append("Still waiting on you") }
+        parts.append(w.last.map { "Last: " + $0 } ?? (w.read ? "Your turn" : "Finished"))
+        let from = w.since ?? w.at
+        let minutes = Int(Date().timeIntervalSince(from) / 60)
+        if !w.read { parts.append(minutes < 1 ? "just now" : "\(minutes) min ago") }
+        else if w.since != nil { parts.append(minutes < 1 ? "waiting" : "waiting \(minutes) min") }
+        return parts.joined(separator: " · ")
+    }
+
+    static let turnBadge: Badge = ("YOUR TURN", Theme.tile, Theme.workingFg)
+
+    /// One line for the hover card; a short list when the app has several chats going.
+    func cardDetail(_ t: Tracked) -> String {
+        let count = t.waiting.count + max(t.sessions.count, t.isWorking ? 1 : 0)
+        if count > 1 {
+            var lines = t.waiting.reversed().map { "• \($0.title) — \($0.read ? "your turn" : "ready")" }
+            if t.sessions.isEmpty, t.isWorking { lines.append("• \(workingTitle(t)) — working") }
+            lines += t.sessions.map { "• " + $0.title + " — " + ($0.step ?? "working") }
+            return lines.joined(separator: "\n")
+        }
+        if let w = t.newestUnread { return waitingDetail(w) }
+        if t.isWorking { return workingDetail(t) }
+        if let w = t.waiting.last { return waitingDetail(w) }
+        return isRunning(t) ? "Waiting for you" : "Not open"
     }
 }

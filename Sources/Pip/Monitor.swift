@@ -6,7 +6,7 @@ typealias Badge = (text: String, bg: Color, fg: Color)
 @MainActor
 final class MonitorLayout: ObservableObject {
     @Published var listHeight: CGFloat = 200
-    @Published var opensLeft = true     // Pip sits on the right edge, so the panel grows to the left
+    @Published var edge: PipEdge = .right   // the strip's edge; the panel grows away from it
 }
 
 /// The panel that slides out from behind the strip when you click Pip: one card per app with its state.
@@ -27,13 +27,14 @@ struct MonitorView: View {
         .frame(width: Theme.monitorWidth)
         .overlay(alignment: .bottom) { notice }
         // The edge next to the strip reaches under it, so the two read as one piece.
-        .padding(layout.opensLeft ? .trailing : .leading, Theme.tuck)
+        .padding(layout.edge == .top ? .top : layout.edge == .right ? .trailing : .leading, Theme.tuck)
         .background(Theme.sand)
         .clipShape(shape)
         .overlay(shape.strokeBorder(Theme.hairline, lineWidth: 1))
         .background(shape.fill(Theme.sand).shadow(color: .black.opacity(0.14), radius: 16, y: 6))
         .padding(Theme.monitorMargin)
-        .offset(x: shown ? 0 : (layout.opensLeft ? 60 : -60))
+        .offset(x: shown || layout.edge == .top ? 0 : (layout.edge == .right ? 60 : -60),
+                y: shown || layout.edge != .top ? 0 : -60)
         .opacity(shown ? 1 : 0)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.announcing)
         .onAppear { withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { shown = true } }
@@ -60,7 +61,9 @@ struct MonitorView: View {
 
     @ViewBuilder private var notice: some View {
         if let id = store.announcing, let t = store.app(id) {
-            ToastView(icon: t.icon, title: store.cardTitle(t) + " is ready!", note: t.note) { store.open(id) }
+            let title = store.announceTitle ?? store.cardTitle(t)
+            ToastView(icon: t.icon, title: store.announceNudge ? "Still waiting on you: " + title : title + " is ready!",
+                      note: t.waiting.last { $0.title == title }?.last) { store.open(id) }
                 .padding(12)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
@@ -80,33 +83,31 @@ struct ChatList: View {
                          badge: ("SETUP", Theme.readyBg, Theme.readyFg)) { store.requestAccess(openSettings: true) }
                 }
                 ForEach(store.visibleApps) { t in
-                    Group {
-                        if t.sessions.count > 1 {
-                            // One card per running chat, plus the one that just finished.
-                            if t.unseen, let done = t.lastDone {
-                                Card(title: done, detail: "\(t.name) · finished", icon: t.icon,
-                                     badge: ("READY", Theme.readyBg, Theme.readyFg)) { store.open(t.id) }
+                    // Finished chats first, newest on top, then whatever is still running.
+                    ForEach(t.waiting.reversed(), id: \.title) { w in
+                        Card(title: w.title, detail: store.waitingDetail(w), icon: t.icon,
+                             badge: w.read ? Store.turnBadge : ("READY", Theme.readyBg, Theme.readyFg),
+                             quiet: w.read) { store.open(t.id) }
+                            .contextMenu {
+                                Button("Open \(t.name)") { store.open(t.id) }
+                                Button("Done with This") { store.dismiss(t.id, title: w.title) }
                             }
-                            ForEach(t.sessions, id: \.title) { s in
-                                Card(title: s.title, detail: store.sessionDetail(s), icon: t.icon,
-                                     badge: ("WORKING", Theme.workingBg, Theme.workingFg)) { store.open(t.id) }
-                            }
-                        } else {
-                            Card(title: store.cardTitle(t), detail: store.cardDetail(t), icon: t.icon,
-                                 badge: store.badge(t)) { store.open(t.id) }
-                        }
                     }
-                    .contextMenu {
-                        Button("Open \(t.name)") { store.open(t.id) }
-                        Button("Move Up") { store.move(t.id, by: -1) }
-                        Button("Move Down") { store.move(t.id, by: 1) }
-                        Divider()
-                        Button("Remove from Pip") { store.remove(t.id) }
+                    if !t.sessions.isEmpty {
+                        ForEach(t.sessions, id: \.title) { s in
+                            Card(title: s.title, detail: store.sessionDetail(s), icon: t.icon,
+                                 badge: ("WORKING", Theme.workingBg, Theme.workingFg)) { store.open(t.id) }
+                                .contextMenu { appMenu(t) }
+                        }
+                    } else if t.isWorking {
+                        Card(title: store.workingTitle(t), detail: store.workingDetail(t), icon: t.icon,
+                             badge: ("WORKING", Theme.workingBg, Theme.workingFg)) { store.open(t.id) }
+                            .contextMenu { appMenu(t) }
                     }
                 }
                 if store.visibleApps.isEmpty {
                     Text(store.apps.isEmpty ? "Add an app with ⊕ and Pip will watch it for you."
-                                            : "None of your apps are open. Pip shows them here when they are.")
+                                            : "Nothing running. Chats show up here while they work.")
                         .font(.system(size: 12)).foregroundStyle(Theme.muted)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
                 }
@@ -118,6 +119,13 @@ struct ChatList: View {
         .frame(width: Theme.monitorWidth)
     }
 
+    @ViewBuilder private func appMenu(_ t: Tracked) -> some View {
+        Button("Open \(t.name)") { store.open(t.id) }
+        Button("Move Up") { store.move(t.id, by: -1) }
+        Button("Move Down") { store.move(t.id, by: 1) }
+        Divider()
+        Button("Remove from Pip") { store.remove(t.id) }
+    }
 }
 
 private struct Card: View {
@@ -126,6 +134,7 @@ private struct Card: View {
     var icon: NSImage?
     let badge: Badge
     var dimmed = false
+    var quiet = false          // waiting on you: an outlined card instead of a white one
     let onTap: () -> Void
     @State private var hovered = false
 
@@ -149,8 +158,13 @@ private struct Card: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white)
-                .shadow(color: .black.opacity(hovered ? 0.09 : 0.03), radius: hovered ? 6 : 2, y: 1)
+                .fill(quiet ? Theme.tile : Color.white)
+                .shadow(color: .black.opacity(quiet ? 0 : hovered ? 0.09 : 0.03), radius: hovered ? 6 : 2, y: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                .opacity(quiet ? 1 : 0)
         )
         .opacity(dimmed ? 0.6 : 1)
         .contentShape(Rectangle())

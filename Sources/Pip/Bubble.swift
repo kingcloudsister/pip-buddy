@@ -16,10 +16,12 @@ struct BubbleContent {
         if let h = store.hovered {
             switch h {
             case "pip:mascot":
-                let done = store.visibleApps.filter(\.unseen).count
+                let ready = store.visibleApps.reduce(0) { $0 + $1.waiting.filter { !$0.read }.count }
+                let turn = store.visibleApps.reduce(0) { $0 + $1.waiting.filter(\.read).count }
                 let working = store.visibleApps.reduce(0) { $0 + ($1.isWorking ? max(1, $1.sessions.count) : 0) }
                 var parts: [String] = []
-                if done > 0 { parts.append("\(done) ready") }
+                if ready > 0 { parts.append("\(ready) ready") }
+                if turn > 0 { parts.append("\(turn) waiting on you") }
                 if working > 0 { parts.append("\(working) working") }
                 return BubbleContent(key: h, title: "Pip", detail: parts.isEmpty ? "All quiet… zzz" : parts.joined(separator: " · "),
                                      cta: "Click to see all chats", centerY: Theme.mascotCenter)
@@ -38,8 +40,16 @@ struct BubbleContent {
         let shown = store.visibleApps
         if let a = store.announcing, let i = shown.firstIndex(where: { $0.id == a }) {
             let t = shown[i]
-            return BubbleContent(key: "done:" + a, icon: t.icon, title: store.cardTitle(t), badge: ("READY", Theme.readyBg, Theme.readyFg),
-                                 detail: store.cardDetail(t), cta: "Tap back", tapID: a, centerY: Theme.rowCenter(i))
+            // Minimized, the card comes out of the face.
+            let title = store.announceTitle ?? store.cardTitle(t)
+            let w = t.waiting.last { $0.title == title }
+            return BubbleContent(key: (store.announceNudge ? "nudge:" : "done:") + a + title, icon: t.icon,
+                                 title: store.announceNudge ? "Still waiting on you" : title,
+                                 badge: store.announceNudge ? Store.turnBadge : ("READY", Theme.readyBg, Theme.readyFg),
+                                 detail: store.announceNudge ? title + (w?.last.map { " · Last: " + $0 } ?? "")
+                                                             : (w.map(store.waitingDetail) ?? store.cardDetail(t)),
+                                 cta: "Tap back", tapID: a,
+                                 centerY: store.collapsed ? Theme.mascotCenter : Theme.rowCenter(i))
         }
         return nil
     }
@@ -50,7 +60,7 @@ struct PopCard: View {
     static let shadowPad: CGFloat = 12
 
     let content: BubbleContent
-    let onRight: Bool           // the strip is on the right edge of the screen
+    let edge: PipEdge           // the strip's edge; the card slides out away from it
     var wrapWidth: CGFloat?     // set when the text is too long for one line
     let onTap: () -> Void
     @State private var shown = false
@@ -83,7 +93,7 @@ struct PopCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-        .padding(onRight ? .trailing : .leading, Theme.tuck)
+        .padding(edge == .top ? .top : edge == .right ? .trailing : .leading, Theme.tuck)
         .background(
             shape.fill(Color.white)
                 .overlay(shape.strokeBorder(Theme.hairline, lineWidth: 1))
@@ -92,7 +102,7 @@ struct PopCard: View {
         .padding(Self.shadowPad)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .offset(x: shown ? 0 : (onRight ? 40 : -40))
+        .offset(x: shown || edge == .top ? 0 : (edge == .right ? 40 : -40), y: shown || edge != .top ? 0 : -40)
         .opacity(shown ? 1 : 0)
         .onAppear {
             withAnimation(.spring(response: 0.32, dampingFraction: c.tapID == nil ? 0.9 : 0.68)) { shown = true }

@@ -59,9 +59,9 @@ final class PillController {
         let size = measure(PillView(store: store))
         let vf = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
         let d = UserDefaults.standard
-        let onRight = d.object(forKey: "pillOnRight") as? Bool ?? true
-        let top = d.object(forKey: "pillTop") as? Double ?? Double(vf.minY + vf.height * 0.72)
-        panel.setFrame(Self.snapped(NSRect(origin: .zero, size: size), onRight: onRight, top: top, in: vf), display: true)
+        let along = d.object(forKey: "pillAlong") as? Double ?? d.object(forKey: "pillTop") as? Double
+            ?? Double(store.edge.horizontal ? vf.midX - size.width / 2 : vf.minY + vf.height * 0.72)
+        panel.setFrame(Self.placed(size, store.edge, along: along, in: vf), display: true)
         panel.orderFrontRegardless()
 
         watch = store.objectWillChange.sink { [weak self] _ in self?.queueLayout() }
@@ -79,14 +79,18 @@ final class PillController {
         }
     }
 
-    /// Resize to fit the rows, keeping the top edge and the screen edge Pip sits against.
+    private var screen: NSScreen { panel.screen ?? NSScreen.main ?? NSScreen.screens[0] }
+
+    /// Where along its edge the strip starts: its top for the side edges, its left end along the top.
+    private func along(_ f: NSRect) -> Double { Double(store.edge.horizontal ? f.minX : f.maxY) }
+
+    /// Resize to fit the tiles, keeping the strip against its edge and its start where it was.
     private func layout() {
-        let size = measure(PillView(store: store))
         var f = panel.frame
-        if f.size != size {
-            let onRight = f.midX > (panel.screen ?? NSScreen.main)!.frame.midX
-            f = NSRect(x: onRight ? f.maxX - size.width : f.minX, y: f.maxY - size.height, width: size.width, height: size.height)
-            panel.setFrame(f, display: true)
+        if dragStart == nil {
+            let size = measure(PillView(store: store))
+            let target = Self.placed(size, store.edge, along: along(f), in: screen.visibleFrame)
+            if target != f { panel.setFrame(target, display: true); f = target }
         }
         bubble.update(pill: f)
         monitor.update(pill: f)
@@ -104,25 +108,49 @@ final class PillController {
         bubble.update(pill: panel.frame)
     }
 
+    /// Snaps to whichever edge the pointer is nearest: left, right, or the top of the screen.
     func dragEnded() {
         dragStart = nil
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? panel.screen ?? NSScreen.main!
-        let onRight = panel.frame.midX > screen.frame.midX
-        let f = Self.snapped(panel.frame, onRight: onRight, top: panel.frame.maxY, in: screen.visibleFrame)
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? self.screen
+        let vf = screen.visibleFrame
+        let toLeft = mouse.x - vf.minX, toRight = vf.maxX - mouse.x, toTop = vf.maxY - mouse.y
+        let edge: PipEdge = toTop < min(toLeft, toRight) ? .top : (toRight < toLeft ? .right : .left)
+        settle(on: edge, near: mouse, in: vf)
+    }
+
+    /// Moves the strip to another edge from the menu, keeping it on the same screen.
+    func move(to edge: PipEdge) {
+        let vf = screen.visibleFrame
+        settle(on: edge, near: NSPoint(x: panel.frame.midX, y: panel.frame.maxY - Theme.mascotCenter), in: vf)
+    }
+
+    private func settle(on edge: PipEdge, near point: NSPoint, in vf: NSRect) {
+        let sameAxis = edge.horizontal == store.edge.horizontal
+        let old = panel.frame
+        if store.edge != edge { store.edge = edge }
+        let size = measure(PillView(store: store))
+        // Keep the face under the pointer when the strip turns between standing and lying flat.
+        let along: Double = sameAxis ? (edge.horizontal ? Double(old.minX) : Double(old.maxY))
+            : (edge.horizontal ? Double(point.x - Theme.mascotCenter) : Double(point.y + Theme.mascotCenter))
+        let f = Self.placed(size, edge, along: along, in: vf)
         panel.setFrame(f, display: true, animate: true)
-        UserDefaults.standard.set(onRight, forKey: "pillOnRight")
-        UserDefaults.standard.set(Double(f.maxY), forKey: "pillTop")
+        UserDefaults.standard.set(edge.horizontal ? Double(f.minX) : Double(f.maxY), forKey: "pillAlong")
         bubble.update(pill: f)
     }
 
-    /// Hugs the left or right edge of the screen, kept fully on screen.
-    private static func snapped(_ f: NSRect, onRight: Bool, top: Double, in vf: NSRect) -> NSRect {
+    /// Against the chosen edge, kept fully on screen. `along` is the top (side edges) or left end (top edge).
+    private static func placed(_ size: NSSize, _ edge: PipEdge, along: Double, in vf: NSRect) -> NSRect {
         let inset = Theme.margin - 6
-        let x = onRight ? vf.maxX - f.width + inset : vf.minX - inset
-        let maxTop = vf.maxY + Theme.margin
-        let minTop = vf.minY + f.height - Theme.margin
-        let t = min(max(CGFloat(top), minTop), maxTop)
-        return NSRect(x: x, y: t - f.height, width: f.width, height: f.height)
+        switch edge {
+        case .left, .right:
+            let x = edge == .right ? vf.maxX - size.width + inset : vf.minX - inset
+            let t = min(max(CGFloat(along), vf.minY + size.height - Theme.margin), vf.maxY + Theme.margin)
+            return NSRect(x: x, y: t - size.height, width: size.width, height: size.height)
+        case .top:
+            let x = min(max(CGFloat(along), vf.minX - Theme.margin), vf.maxX - size.width + Theme.margin)
+            return NSRect(x: x, y: vf.maxY - size.height + inset, width: size.width, height: size.height)
+        }
     }
 }
 
@@ -145,10 +173,10 @@ final class BubbleController {
             return
         }
         let screen = NSScreen.screens.first { $0.frame.intersects(pill) } ?? NSScreen.main!
-        let onRight = pill.midX > screen.frame.midX
+        let edge = store.edge
         let store = store
         func card(wrap: CGFloat?) -> PopCard {
-            PopCard(content: c, onRight: onRight, wrapWidth: wrap) {
+            PopCard(content: c, edge: edge, wrapWidth: wrap) {
                 if let id = c.tapID { store.open(id) }
                 else if c.key == "pip:access" { store.requestAccess(openSettings: true) }
                 else if c.key == "pip:mascot" { store.panelOpen = true }
@@ -162,11 +190,18 @@ final class BubbleController {
             size = measure(view)
         }
         hosting.rootView = AnyView(view.id(c.key))
-        // The card's edge sits under the middle of the strip.
+        // The card's edge sits under the middle of the strip, level with the tile it talks about.
         let pad = PopCard.shadowPad
-        let x = onRight ? pill.midX + pad - size.width : pill.midX - pad
-        let cy = pill.maxY - c.centerY
-        panel.setFrame(NSRect(x: x, y: cy - size.height / 2, width: size.width, height: size.height), display: true)
+        let frame: NSRect
+        if edge.horizontal {
+            let vf = screen.visibleFrame
+            let x = min(max(pill.minX + c.centerY - size.width / 2, vf.minX), vf.maxX - size.width)
+            frame = NSRect(x: x, y: pill.midY + pad - size.height, width: size.width, height: size.height)
+        } else {
+            let x = edge == .right ? pill.midX + pad - size.width : pill.midX - pad
+            frame = NSRect(x: x, y: pill.maxY - c.centerY - size.height / 2, width: size.width, height: size.height)
+        }
+        panel.setFrame(frame, display: true)
         // Hover labels only show text; let clicks fall through to whatever is under them.
         panel.ignoresMouseEvents = c.tapID == nil && c.key != "pip:access"
         panel.orderFrontRegardless()
@@ -190,20 +225,29 @@ final class MonitorController {
     func update(pill: NSRect) {
         guard store.panelOpen else { return hide() }
         let screen = NSScreen.screens.first { $0.frame.intersects(pill) } ?? NSScreen.main!
-        let onRight = pill.midX > screen.frame.midX
+        let edge = store.edge
         let natural = measure(ChatList(store: store)).height
         let listHeight = min(max(natural, 150), 420)
         if layout.listHeight != listHeight { layout.listHeight = listHeight }
-        if layout.opensLeft != onRight { layout.opensLeft = onRight }
+        if layout.edge != edge { layout.edge = edge }
 
         let m = Theme.monitorMargin
-        let size = NSSize(width: Theme.monitorWidth + Theme.tuck + 2 * m, height: Theme.monitorHeader + 1 + listHeight + 2 * m)
-        // The panel's edge sits under the middle of the strip, and their tops line up.
-        let x = onRight ? pill.midX + m - size.width : pill.midX - m
         let vf = screen.visibleFrame
-        let stripTop = pill.maxY - Theme.margin
-        let top = min(max(stripTop + m, vf.minY + size.height - m), vf.maxY + m)
-        panel.setFrame(NSRect(x: x, y: top - size.height, width: size.width, height: size.height), display: true)
+        let frame: NSRect
+        if edge.horizontal {
+            // Drops down from under the strip, centered on it and kept on screen.
+            let size = NSSize(width: Theme.monitorWidth + 2 * m, height: Theme.monitorHeader + 1 + listHeight + Theme.tuck + 2 * m)
+            let x = min(max(pill.midX - size.width / 2, vf.minX - m), vf.maxX - size.width + m)
+            frame = NSRect(x: x, y: pill.midY + m - size.height, width: size.width, height: size.height)
+        } else {
+            let size = NSSize(width: Theme.monitorWidth + Theme.tuck + 2 * m, height: Theme.monitorHeader + 1 + listHeight + 2 * m)
+            // The panel's edge sits under the middle of the strip, and their tops line up.
+            let x = edge == .right ? pill.midX + m - size.width : pill.midX - m
+            let stripTop = pill.maxY - Theme.margin
+            let top = min(max(stripTop + m, vf.minY + size.height - m), vf.maxY + m)
+            frame = NSRect(x: x, y: top - size.height, width: size.width, height: size.height)
+        }
+        panel.setFrame(frame, display: true)
 
         if outsideClicks == nil {
             hosting.rootView = AnyView(MonitorView(store: store, layout: layout))
