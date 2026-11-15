@@ -19,6 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hooks.start()
         Updater.shared.start()
+        // `--add-app <bundle id>`: the same as adding it from ⊕ (for testing).
+        if let k = CommandLine.arguments.firstIndex(of: "--add-app"), k + 1 < CommandLine.arguments.count {
+            let id = CommandLine.arguments[k + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MainActor.assumeIsolated { Store.shared.addFromMenu(id) } }
+        }
         // `--update-now`: check and install straight away (for testing updates).
         if CommandLine.arguments.contains("--update-now") {
             Task { await Updater.shared.check(quietly: true); Updater.shared.install() }

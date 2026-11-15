@@ -66,6 +66,9 @@ final class Store: ObservableObject {
     @Published var hovered: String?
     @Published var panelOpen = false
     @Published var update: String?          // a newer Pip version is available
+    /// A short confirmation that slides out of ⊕ after you add an app.
+    @Published var added: (id: String, open: Bool)?
+    private var hideAdded: DispatchWorkItem?
     @Published var updating = false
     @Published var axTrusted = AXIsProcessTrusted()
     @Published var runningChanged = 0
@@ -155,6 +158,18 @@ final class Store: ObservableObject {
         persist()
     }
 
+    /// Adding from ⊕: watch the app, and say so, since a closed app doesn't show on the strip until it opens.
+    func addFromMenu(_ bundleID: String) {
+        add(bundleID)
+        guard let t = app(bundleID) else { return }
+        added = (t.id, isRunning(t))
+        Self.log("added \(t.name) from ⊕ (\(isRunning(t) ? "open" : "closed"))")
+        hideAdded?.cancel()
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.added = nil } }
+        hideAdded = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+    }
+
     /// An app where discovery saw an agent at work: watch it from now on.
     func discovered(_ bundleID: String) {
         guard findAgents, !ignored.contains(bundleID), app(bundleID) == nil else { return }
@@ -224,6 +239,7 @@ final class Store: ObservableObject {
         }
         // Opening is not reading: the chat counts as looked at after a real visit (see `tickVisits`).
         if announcing == id { announcing = nil }
+        if added?.id == id { added = nil }
         panelOpen = false
     }
 
@@ -558,7 +574,7 @@ final class Store: ObservableObject {
         panel.allowedContentTypes = [.application]
         panel.prompt = "Add to Pip"
         NSApp.activate(ignoringOtherApps: true)
-        if panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier { add(id) }
+        if panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier { addFromMenu(id) }
     }
 
     // MARK: Settings

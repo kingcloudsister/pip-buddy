@@ -256,7 +256,7 @@ struct AddMenuItems: View {
         if addable.isEmpty { Text("No other apps open") }
         ForEach(addable, id: \.processIdentifier) { app in
             Button(app.localizedName ?? app.bundleIdentifier ?? "App") {
-                if let id = app.bundleIdentifier { store.add(id) }
+                if let id = app.bundleIdentifier { store.addFromMenu(id) }
             }
         }
         Divider()

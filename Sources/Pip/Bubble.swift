@@ -14,6 +14,15 @@ struct BubbleContent {
 
     @MainActor
     static func current(_ store: Store) -> BubbleContent? {
+        // Confirms an app you just added, next to ⊕.
+        if let a = store.added, let t = store.app(a.id) {
+            let addRow = store.visibleApps.count + (store.axTrusted ? 0 : 1) + (store.update == nil ? 0 : 1)
+            return BubbleContent(key: "added:" + a.id, icon: t.icon, title: "Watching \(t.name)",
+                                 badge: ("ADDED", Theme.workingBg, Theme.workingFg),
+                                 detail: a.open ? "It's on the strip now." : "It'll show up here whenever it's open.",
+                                 cta: a.open ? nil : "Open \(t.name)", tapID: a.open ? nil : a.id,
+                                 centerY: store.collapsed ? Theme.mascotCenter : Theme.rowCenter(addRow))
+        }
         if let h = store.hovered {
             switch h {
             case "pip:mascot":
