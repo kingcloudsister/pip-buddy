@@ -571,10 +571,11 @@ final class Store: ObservableObject {
         }
     }
 
-    /// What the strip and panel show: only apps in the middle of something, or that just finished and
-    /// you have not looked at yet. Open but quiet apps stay out of the way.
+    /// What the strip and panel show: every watched app that is open, with its status, until you quit it.
+    /// Rows reported by scripts (no app of their own) show while they have something to say.
     var visibleApps: [Tracked] {
-        apps.filter { $0.isWorking || !$0.waiting.isEmpty }
+        _ = runningChanged
+        return apps.filter { t in t.bundleID == nil ? (t.isWorking || !t.waiting.isEmpty) : isRunning(t) }
     }
 
     func isRunning(_ t: Tracked) -> Bool {
@@ -676,6 +677,6 @@ final class Store: ObservableObject {
         if let w = t.newestUnread { return waitingDetail(w) }
         if t.isWorking { return workingDetail(t) }
         if let w = t.waiting.last { return waitingDetail(w) }
-        return isRunning(t) ? "Waiting for you" : "Not open"
+        return isRunning(t) ? "Idle · nothing running" : "Not open"
     }
 }

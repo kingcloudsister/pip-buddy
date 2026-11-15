@@ -103,11 +103,16 @@ struct ChatList: View {
                         Card(title: store.workingTitle(t), detail: store.workingDetail(t), icon: t.icon,
                              badge: ("WORKING", Theme.workingBg, Theme.workingFg)) { store.open(t.id) }
                             .contextMenu { appMenu(t) }
+                    } else if t.waiting.isEmpty {
+                        // Open and quiet.
+                        Card(title: t.name, detail: "Nothing running right now", icon: t.icon,
+                             badge: ("IDLE", Theme.quietBg, Theme.quietFg)) { store.open(t.id) }
+                            .contextMenu { appMenu(t) }
                     }
                 }
                 if store.visibleApps.isEmpty {
                     Text(store.apps.isEmpty ? "Add an app with ⊕ and Pip will watch it for you."
-                                            : "Nothing running. Chats show up here while they work.")
+                                            : "None of your agent apps are open. They show up here when they are.")
                         .font(.system(size: 12)).foregroundStyle(Theme.muted)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
                 }

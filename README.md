@@ -5,7 +5,7 @@
 A tiny strip on the edge of your Mac screen that keeps an eye on your AI chats (Claude, Amp, Grok, ChatGPT, or any app you add). When one finishes while you're somewhere else, Pip pops out a card, and one click takes you straight back to that chat.
 
 - **The face** at the top sleeps when nothing runs, watches while something works, and smiles and hops when something is done. Click it for the panel with every chat that's running or waiting on you.
-- **Tiles** appear only for apps in the middle of something, or with a finished chat waiting on you. Three hopping dots mean working, a small number means several chats at once, a pink dot means ready.
+- **Tiles** show every agent app that's open, with its status, until you quit it: three hopping dots mean working, a small number means several chats at once, a pink dot means ready, a dashed outline means it's your turn. Quiet apps just sit there.
 - **Hover** a tile to see each chat's name and what it's doing now ("Now: Running the tests · 4 min"). **Click** to jump to that chat; for Claude, Pip opens the chat itself.
 - **Drag** the strip to the left, right, or top edge of the screen. The chevron at the end folds it down to just the face. Right-click for settings.
 
