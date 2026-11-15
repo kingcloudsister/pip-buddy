@@ -1,5 +1,7 @@
 # Pip
 
+<img src="Tools/icon-preview.png" width="128" alt="Pip's icon: a smiling square face with an antenna">
+
 A tiny strip on the edge of your Mac screen that keeps an eye on your AI chats (Claude, Amp, Grok, ChatGPT, or any app you add). When one finishes while you're somewhere else, Pip pops out a card, and one click takes you straight back to that chat.
 
 - **The face** at the top sleeps when nothing runs, watches while something works, and smiles and hops when something is done. Click it for the panel with every chat that's running or waiting on you.
@@ -37,6 +39,8 @@ A finished chat stays on the strip until you pick it back up, so a quick glance 
 
 Every 1.5 seconds Pip looks at the apps you track. Chat apps show a **Stop** button while they generate; when it disappears, the chat is done. A new number on an app's Dock badge counts too. Apps that list their chats with a status, like the Claude app's sidebar ("Fix the login bug · Running"), are followed chat by chat.
 
+**Grok Bot** runs its bots remotely, so Pip follows them through Grok Bot's own local list of bots, even with its window closed: a bot is working while your newest message has no reply yet, and it's ready when a reply arrives. If a bot replies more than once to one task, each reply pops a card.
+
 If an app never shows as working, right-click Pip → **Copy Detection Report** while it generates, or write the report to a file:
 
 ```sh
@@ -58,7 +62,7 @@ curl -s "http://127.0.0.1:47321/done?app=My%20Agent&note=Tests%20pass&open=com.a
 
 Everything Pip knows stays on your Mac.
 
-- **What it reads:** with the Accessibility permission, the window titles, button labels and chat names of the apps you track, plus Dock badges. Not the messages themselves.
+- **What it reads:** with the Accessibility permission, the window titles, button labels and chat names of the apps you track, plus Dock badges. For Grok Bot, the bot names, unread counts and message IDs in Grok Bot's local list (never the messages, and never its saved secrets). Not the messages themselves, in any app.
 - **What it presses:** only a chat's row in an app's sidebar (and Claude's Chat/Code switch), and only when you click that chat in Pip. It never types.
 - **What it stores:** your app list, its position and settings (in its preferences), and a log of state changes at `~/Library/Logs/Pip.log` (app and chat names, no message text). None of it is ever uploaded.
 - **What goes over the internet:** only the update check, a plain request to GitHub for this repo's latest release, and the download when you install one. No account, no tracking. Turn it off in the right-click menu.

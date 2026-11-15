@@ -37,6 +37,7 @@ struct Tracked: Identifiable, Equatable {
     var status: Status = .idle
     var waiting: [Waiting] = [] // finished chats that still need you, oldest first
     var listsChats = false      // the app names its running chats (Claude's sidebar), so finishes are per chat
+    var fromRoster = false      // followed through the app's own list (Grok Bot), not its window
     var focused: String?        // the chat open on screen in that app, when it says
     var title: String?          // front window title, usually the conversation name
     var note: String?           // message sent with a hook
@@ -287,6 +288,8 @@ final class Store: ObservableObject {
                 if case .working = apps[i].status { apps[i].status = .idle }
                 continue
             }
+            // Apps followed through their own list (Grok Bot) get their state from `ingestBots`.
+            if apps[i].fromRoster { continue }
             if var title = p.title, !title.isEmpty {
                 // Browsers append their own name: "Fix the login bug - Google Chrome".
                 for sep in [" - ", " — ", " – "] where title.hasSuffix(sep + apps[i].name) {
@@ -330,6 +333,42 @@ final class Store: ObservableObject {
             badges[id] = badge
         }
         tickVisits()
+    }
+
+    private var bots: [String: BotState] = [:]
+
+    /// Grok Bot's bots, read from its local list: which are working, which replied, which you've read.
+    func ingestBots(_ list: [BotState]) {
+        guard let i = apps.firstIndex(where: { $0.bundleID == GrokRoster.bundleID }) else { return }
+        let id = apps[i].id
+        if !apps[i].fromRoster { apps[i].fromRoster = true; apps[i].listsChats = true }
+        let now = list.filter(\.working).map(\.name)
+        let keep = now.map { name in apps[i].sessions.first { $0.title == name } ?? Session(title: name) }
+        if apps[i].sessions != keep { apps[i].sessions = keep }
+        for name in now { apps[i].waiting.removeAll { $0.title == name } }
+        for b in list {
+            defer { bots[b.name] = b }
+            guard let old = bots[b.name] else { continue }   // first read: just learn the current state
+            if b.lastReply != old.lastReply, !b.lastReply.isEmpty, b.unread > 0 {
+                addWaiting(i, Waiting(title: b.name, last: b.needsAnswer ? "Needs your answer" : "Replied"))
+            } else if b.unread == 0, old.unread > 0, let k = apps[i].waiting.firstIndex(where: { $0.title == b.name }) {
+                // You read it in Grok Bot.
+                apps[i].waiting[k].read = true
+            }
+        }
+        if !now.isEmpty {
+            if case .working = apps[i].status {} else { apps[i].status = .working(since: Date()) }
+        } else if apps[i].isWorking {
+            apps[i].status = .done(at: Date())
+        }
+        logBots(apps[i], id)
+    }
+
+    private func logBots(_ t: Tracked, _ id: String) {
+        let key = "working=[\(t.sessions.map(\.title).joined(separator: "; "))] waiting=\(t.waiting.map { "\($0.title)\($0.read ? "(read)" : "")" })"
+        guard lastLogged[id] != key else { return }
+        lastLogged[id] = key
+        Self.log("\(t.name) (list): \(key)")
     }
 
     // MARK: Log

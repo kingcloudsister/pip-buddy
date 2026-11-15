@@ -48,10 +48,13 @@ final class Watcher {
         guard trusted, !busy else { return }
         busy = true
         let targets = targets()
+        let readBots = targets.contains { $0.id == GrokRoster.bundleID }
         worker.queue.async { [worker] in
             let probes = worker.probeAll(targets)
+            let bots = readBots ? GrokRoster.read() : nil
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    if let bots { self.store.ingestBots(bots) }
                     self.store.ingest(probes)
                     self.busy = false
                 }
@@ -64,7 +67,12 @@ final class Watcher {
         guard let r = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { return }
         let pid = r.processIdentifier
         worker.queue.async { [worker] in
-            let ok = worker.pressChat(pid: pid, title: title)
+            // An app opened from the Dock may need a moment to bring its window back.
+            var ok = false
+            for attempt in 0..<4 where !ok {
+                if attempt > 0 { Thread.sleep(forTimeInterval: 0.5) }
+                ok = worker.pressChat(pid: pid, title: title)
+            }
             Store.log("open chat \"\(title)\": \(ok ? "pressed its row" : "row not found, opened the app only")")
         }
     }
