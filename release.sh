@@ -13,7 +13,7 @@ OWNER="${REPO%%/*}"
 export GH_TOKEN="${GH_TOKEN:-$(gh auth token -u "$OWNER" 2>/dev/null || true)}"
 [ -n "$GH_TOKEN" ] || { echo "Sign in to GitHub as $OWNER first: gh auth login" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "Commit your changes first." >&2; exit 1; }
-security find-identity -p codesigning | grep -q '"Pip Buddy"' || {
+security find-identity -p codesigning | /usr/bin/grep -q '"Pip Buddy"' || {
   echo "The Pip Buddy signing key isn't in this Mac's keychain; see RELEASING.md." >&2; exit 1; }
 CUR=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Info.plist)
 if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then echo "v$V is already released." >&2; exit 1; fi
@@ -26,8 +26,8 @@ VERSION="$V" ./make-app.sh
 
 # What ships must carry nothing about the person building it.
 SIG=$(codesign -dvv build/Pip.app 2>&1)
-echo "$SIG" | grep -q 'Authority=Pip Buddy' || { echo "Not signed with the Pip Buddy key." >&2; exit 1; }
-if echo "$SIG" | grep -qi '@' || LC_ALL=C grep -r -a -q -i -E "/Users/[A-Za-z0-9]|$(whoami)" build/Pip.app; then
+echo "$SIG" | /usr/bin/grep -q 'Authority=Pip Buddy' || { echo "Not signed with the Pip Buddy key." >&2; exit 1; }
+if echo "$SIG" | /usr/bin/grep -qi '@' || LC_ALL=C /usr/bin/grep -r -a -q -i -E "/Users/[A-Za-z0-9]|$(whoami)" build/Pip.app; then
   echo "The build contains a path, user name or email; not publishing." >&2; exit 1
 fi
 

@@ -19,6 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hooks.start()
         Updater.shared.start()
+        // `--update-now`: check and install straight away (for testing updates).
+        if CommandLine.arguments.contains("--update-now") {
+            Task { await Updater.shared.check(quietly: true); Updater.shared.install() }
+        }
     }
 
     func openChat(bundleID: String, title: String) { watcher.openChat(bundleID: bundleID, title: title) }

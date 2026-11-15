@@ -28,8 +28,8 @@ fi
 SIGN_ID="${PIP_SIGN_ID:-$(security find-identity -p codesigning 2>/dev/null | sed -n 's/^ *[0-9]*) \([0-9A-F]\{40\}\) "Pip Buddy".*/\1/p' | head -1)}"
 codesign --force --timestamp=none --sign "${SIGN_ID:--}" "$APP"
 if [ -n "$SIGN_ID" ]; then echo "Signed with: Pip Buddy key"; else echo "Signed with: ad-hoc"; fi
-if codesign -dvv "$APP" 2>&1 | grep -qi '@'; then echo "Refusing: the signature contains an email address" >&2; exit 1; fi
-if LC_ALL=C grep -a -q -E "/Users/[A-Za-z0-9]|$(whoami)" "$APP/Contents/MacOS/Pip"; then
+if codesign -dvv "$APP" 2>&1 | /usr/bin/grep -qi '@'; then echo "Refusing: the signature contains an email address" >&2; exit 1; fi
+if LC_ALL=C /usr/bin/grep -a -q -E "/Users/[A-Za-z0-9]|$(whoami)" "$APP/Contents/MacOS/Pip"; then
   echo "Refusing: the app contains a path or user name from this Mac" >&2; exit 1
 fi
 ditto -c -k --keepParent "$APP" build/Pip.zip
