@@ -21,10 +21,15 @@ enum Screenshots {
             let store = sampleStore(scene)
             if let png = shot(store, scene) { try? png.write(to: folder.appendingPathComponent("pip-\(name).png")) }
         }
+        // The panel on its own, on a clear background, for the social preview (Tools/make-social.swift).
+        clear = true
+        if let png = shot(sampleStore(.panel), .panel) { try? png.write(to: folder.appendingPathComponent("pip-panel-clear.png")) }
+        clear = false
         return true
     }
 
     enum Scene { case ready, panel, chats }
+    private static var clear = false
 
     private static func icon(_ bundleID: String, fallback: String) -> NSImage {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { return NSWorkspace.shared.icon(forFile: url.path) }
@@ -111,6 +116,10 @@ enum Screenshots {
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         ctx.scaleBy(x: s, y: s)
+        if clear {
+            for (img, rect) in pieces { ctx.draw(img, in: CGRect(x: rect.minX, y: H - rect.maxY, width: rect.width, height: rect.height)) }
+            return ctx.makeImage().flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
+        }
         // Background: warm sand to soft blush, matching Pip's palette.
         let colors = [CGColor(red: 0.96, green: 0.92, blue: 0.86, alpha: 1), CGColor(red: 0.93, green: 0.86, blue: 0.88, alpha: 1)]
         let g = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: [0, 1])!
