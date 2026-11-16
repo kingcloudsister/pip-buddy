@@ -1,6 +1,7 @@
 import AppKit
 
 if ReportMode.runIfRequested() { exit(0) }
+if MainActor.assumeIsolated({ Screenshots.runIfRequested() }) { exit(0) }
 
 MainActor.assumeIsolated {
     let app = NSApplication.shared

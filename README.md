@@ -1,13 +1,44 @@
-# Pip
+<p align="center">
+  <img src="Tools/icon-preview.png" width="140" alt="Pip's icon: a smiling square face with an antenna">
+</p>
 
-<img src="Tools/icon-preview.png" width="128" alt="Pip's icon: a smiling square face with an antenna">
+<h1 align="center">Pip</h1>
 
-A tiny strip on the edge of your Mac screen that keeps an eye on your AI chats (Claude, Amp, Grok, ChatGPT, or any app you add). When one finishes while you're somewhere else, Pip pops out a card, and one click takes you straight back to that chat.
+<p align="center">
+  <b>Never lose track of your AI agents.</b><br>
+  A tiny Mac sidebar that tells you when Claude, Codex, Grok and your other agents finish, and takes you straight back to the chat.
+</p>
 
-- **The face** at the top sleeps when nothing runs, watches while something works, and smiles and hops when something is done. Click it for the panel with every chat that's running or waiting on you.
-- **Tiles** show every agent app that's open, with its status, until you quit it: three hopping dots mean working, a small number means several chats at once, a pink dot means ready, a dashed outline means it's your turn. Quiet apps just sit there.
-- **Hover** a tile to see each chat's name and what it's doing now ("Now: Running the tests · 4 min"). **Click** to jump to that chat; for Claude, Pip opens the chat itself.
-- **Drag** the strip to the left, right, or top edge of the screen. The chevron at the end folds it down to just the face. Right-click for settings.
+<p align="center">
+  <a href="https://github.com/kingcloudsister/pip-buddy/releases/latest/download/Pip.zip"><b>⬇ Download for Mac</b></a>
+  &nbsp;·&nbsp; macOS 14 or later &nbsp;·&nbsp; Apple silicon &amp; Intel &nbsp;·&nbsp; Free &amp; open source
+</p>
+
+<p align="center">
+  <img src="docs/pip-panel.png" width="820" alt="Pip's strip on the right edge of the screen with its panel open: two Claude chats working, a finished chat ready, a Grok bot waiting on you, and Amp working">
+</p>
+
+## Why
+
+You give an agent a task, switch to something else while it works, and forget to go back. Or you glance at its answer, switch away, and lose the thread. With Claude, Codex, Grok and a terminal agent all running at once, keeping track turns into a job of its own.
+
+Pip keeps track for you. It sits quietly on the edge of your screen, notices on its own which apps have an agent at work, pings you the moment one finishes, and keeps a finished chat on the strip until you've actually picked it back up.
+
+## What it does
+
+<p align="center">
+  <img src="docs/pip-ready.png" width="49%" alt="A finished chat's card sliding out of Pip's strip: Fix the login bug, ready, with Tap back">
+  <img src="docs/pip-chats.png" width="49%" alt="Hovering Claude's tile: two chats running, each with what it is doing now">
+</p>
+
+- **Finds your agents on its own:** Claude, ChatGPT, Cursor, browser agents, and terminal agents like Claude Code, Codex and Gemini CLI. No setup.
+- **Tells you when one is done:** a card slides out with the chat's name and the last thing it did. Click **Tap back** to land right in that chat.
+- **Shows what each one is doing:** hover a tile for every running chat and its current step ("Now: Running the tests · 6 min").
+- **Doesn't let you forget:** a chat you glanced at stays as **your turn** until you reply, with one gentle nudge after 10 minutes.
+- **Stays out of the way:** a slim strip on the left, right or top edge, or folded down to just its face.
+- **Private:** everything stays on your Mac. See [Privacy](#privacy).
+
+The face at the top sleeps when nothing runs, watches while something works, and smiles when something is done. Click it for the panel. Tiles show every open agent app with its status: hopping dots for working, a number for several chats at once, a pink dot for ready, a dashed outline for your turn.
 
 ## Download and install
 

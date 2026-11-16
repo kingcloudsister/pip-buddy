@@ -14,15 +14,18 @@ final class MonitorLayout: ObservableObject {
 struct MonitorView: View {
     @ObservedObject var store: Store
     @ObservedObject var layout: MonitorLayout
-    @State private var shown = false
+    @State private var shown = Render.still
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
         VStack(spacing: 0) {
             header
             Rectangle().fill(Theme.hairline).frame(height: 1)
-            ScrollView(.vertical, showsIndicators: false) { ChatList(store: store) }
-                .frame(height: layout.listHeight)
+            // A picture can't draw a scroll view's contents, so screenshots get the plain list.
+            Group {
+                if Render.still { ChatList(store: store) } else { ScrollView(.vertical, showsIndicators: false) { ChatList(store: store) } }
+            }
+            .frame(height: layout.listHeight, alignment: .top)
         }
         .frame(width: Theme.monitorWidth)
         .overlay(alignment: .bottom) { notice }

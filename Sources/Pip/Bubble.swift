@@ -79,7 +79,7 @@ struct PopCard: View {
     let edge: PipEdge           // the strip's edge; the card slides out away from it
     var wrapWidth: CGFloat?     // set when the text is too long for one line
     let onTap: () -> Void
-    @State private var shown = false
+    @State private var shown = Render.still
 
     var body: some View {
         let c = content
