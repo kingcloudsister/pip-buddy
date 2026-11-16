@@ -21,9 +21,11 @@ enum Screenshots {
             let store = sampleStore(scene)
             if let png = shot(store, scene) { try? png.write(to: folder.appendingPathComponent("pip-\(name).png")) }
         }
-        // The panel on its own, on a clear background, for the social preview (Tools/make-social.swift).
+        // Each scene on its own, on a clear background and cropped to Pip, for the social preview and posts.
         clear = true
-        if let png = shot(sampleStore(.panel), .panel) { try? png.write(to: folder.appendingPathComponent("pip-panel-clear.png")) }
+        for (name, scene) in [("ready", Scene.ready), ("panel", Scene.panel), ("chats", Scene.chats)] {
+            if let png = shot(sampleStore(scene), scene) { try? png.write(to: folder.appendingPathComponent("pip-\(name)-clear.png")) }
+        }
         clear = false
         return true
     }
@@ -118,7 +120,12 @@ enum Screenshots {
         ctx.scaleBy(x: s, y: s)
         if clear {
             for (img, rect) in pieces { ctx.draw(img, in: CGRect(x: rect.minX, y: H - rect.maxY, width: rect.width, height: rect.height)) }
-            return ctx.makeImage().flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
+            // Crop to the pieces (in pixels, y from the top).
+            let box = pieces.map(\.1).reduce(CGRect.null) { $0.union($1) }.intersection(CGRect(x: 0, y: 0, width: W, height: H))
+            guard let full = ctx.makeImage(),
+                  let cut = full.cropping(to: CGRect(x: box.minX * s, y: box.minY * s, width: box.width * s, height: box.height * s))
+            else { return nil }
+            return NSBitmapImageRep(cgImage: cut).representation(using: .png, properties: [:])
         }
         // Background: warm sand to soft blush, matching Pip's palette.
         let colors = [CGColor(red: 0.96, green: 0.92, blue: 0.86, alpha: 1), CGColor(red: 0.93, green: 0.86, blue: 0.88, alpha: 1)]

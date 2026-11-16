@@ -33,14 +33,8 @@ text("Free & open source for macOS", .systemFont(ofSize: 18, weight: .semibold),
 
 // Right: the panel screenshot, cropped to Pip itself.
 if let shot = NSImage(contentsOfFile: "docs/pip-panel-clear.png"), let cg = shot.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-    let px = CGFloat(cg.width) / 880                        // the screenshot is drawn at 2×
-    let crop = CGRect(x: 515 * px, y: 40 * px, width: 365 * px, height: 500 * px)
-    if let part = cg.cropping(to: crop) {
-        let h: CGFloat = 600, w = h * crop.width / crop.height
-        ctx.saveGState()
-        ctx.draw(part, in: CGRect(x: W - w - 12, y: 20, width: w, height: h))
-        ctx.restoreGState()
-    }
+    let h: CGFloat = 600, w = h * CGFloat(cg.width) / CGFloat(cg.height)
+    ctx.draw(cg, in: CGRect(x: W - w - 12, y: 20, width: w, height: h))
 }
 NSGraphicsContext.restoreGraphicsState()
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "docs/social-preview.png"))
