@@ -15,6 +15,8 @@ struct Probe {
     /// Pip couldn't read the app's windows this time (say, a full-screen window on another desktop it hasn't
     /// found yet). Nothing about the app changed; it just couldn't look.
     var unknown = false
+    /// Chats (or the app) showing a question or approval prompt: an agent waiting on your answer.
+    var asking: [String] = []
 }
 
 /// Polls tracked apps through the Accessibility API.
@@ -133,6 +135,11 @@ final class Worker: @unchecked Sendable {
         polls += 1
         var result: [String: Probe] = [:]
         for t in targets {
+            // Messaging apps: only the Dock badge, nothing from inside the app.
+            if Self.messageApps.contains(t.id) {
+                result[t.id] = Probe(working: false, title: nil, badge: badges[t.name] ?? badges[t.name.replacingOccurrences(of: " Desktop", with: "")])
+                continue
+            }
             var p = Self.terminals.contains(t.id) ? terminalProbe(t.pid) : probe(t.pid)
             p.badge = badges[t.name]
             result[t.id] = p
@@ -156,6 +163,19 @@ final class Worker: @unchecked Sendable {
 
     // MARK: Finding agents in any app
 
+    /// Messaging apps: Pip shows their unread count from the Dock badge and never reads inside them.
+    static var messageApps: Set<String> { builtInMessageApps.union(UserDefaults.standard.stringArray(forKey: "extraMessageApps") ?? []) }
+    private static let builtInMessageApps: Set<String> = ["com.automattic.beeper.desktop", "com.tencent.xinWeChat", "com.hnc.Discord",
+        "com.tinyspeck.slackmacgap", "net.whatsapp.WhatsApp", "desktop.WhatsApp", "com.apple.MobileSMS", "ru.keepcoder.Telegram"]
+    /// Buttons agents show when they need your OK (Claude's tool approvals and the like).
+    static func isApprovalLabel(_ label: String) -> Bool {
+        let s = label.lowercased().trimmingCharacters(in: .whitespaces)
+        return ["allow", "allow once", "always allow", "allow for this chat", "deny", "approve", "reject", "don't allow"].contains(s)
+            || ["allow allow", "deny deny", "approve approve"].contains(s)
+    }
+    /// Lines a terminal agent shows when it's waiting for your answer.
+    static let askHints = ["do you want to proceed", "do you want to make this edit", "(y/n)", "[y/n]", "❯ 1. yes", "allow this", "approve this"]
+
     /// Terminal apps: agents there are found by their "esc to interrupt" line, one card per window.
     static let terminals: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
                                          "com.mitchellh.ghostty", "net.kovidgoyal.kitty", "org.alacritty",
@@ -165,7 +185,10 @@ final class Worker: @unchecked Sendable {
         "com.apple.ActivityMonitor", "com.apple.Console", "com.spotify.client", "com.apple.Music", "com.apple.TV",
         "com.apple.QuickTimePlayerX", "org.videolan.vlc", "com.apple.Photos", "com.apple.Preview",
         "com.apple.VoiceMemos", "com.apple.dt.Xcode", "com.apple.iphonesimulator", "us.zoom.xos",
-        "com.apple.FaceTime", "com.apple.Podcasts", "com.apple.garageband10", "com.apple.iMovieApp"]
+        "com.apple.FaceTime", "com.apple.Podcasts", "com.apple.garageband10", "com.apple.iMovieApp",
+        // Messaging apps are never searched for agents: Pip only reads their Dock badge, and only if you add them.
+        "com.automattic.beeper.desktop", "com.tencent.xinWeChat", "com.hnc.Discord", "com.tinyspeck.slackmacgap",
+        "net.whatsapp.WhatsApp", "desktop.WhatsApp", "com.apple.MobileSMS", "ru.keepcoder.Telegram"]
     /// Browsers, where web agents (ChatGPT, Claude, Manus…) run in a tab.
     static let browsers: Set<String> = ["com.apple.Safari", "com.google.Chrome", "company.thebrowser.Browser",
         "company.thebrowser.dia", "com.brave.Browser", "com.microsoft.edgemac", "com.operasoftware.Opera",
@@ -178,7 +201,7 @@ final class Worker: @unchecked Sendable {
     /// a short "Stop generating"-style button, a conversation marked "Running", or an "esc to interrupt" line.
     func discover(_ candidates: [Target]) -> [String] {
         candidates.filter { t in
-            if Self.terminals.contains(t.id) { return !terminalAgents(t.pid).isEmpty }
+            if Self.terminals.contains(t.id) { return !terminalAgents(t.pid).0.isEmpty }
             // Ask an app for its full tree only when it looks like an AI tool or a browser; making every
             // Electron app build one would cost them memory for nothing.
             let enhance = Self.browsers.contains(t.id)
@@ -215,23 +238,28 @@ final class Worker: @unchecked Sendable {
         let focused = (attr(app, kAXFocusedWindowAttribute) as AXUIElement?).flatMap { w in
             (attr(w, kAXTitleAttribute) as String?).map(Self.cleanWindowTitle)
         }
-        let agents = terminalAgents(pid)
-        return Probe(working: !agents.isEmpty, title: focused, sessions: agents, focused: focused)
+        let (agents, asking) = terminalAgents(pid)
+        return Probe(working: !agents.isEmpty, title: focused, sessions: agents, focused: focused, asking: asking)
     }
 
-    private func terminalAgents(_ pid: pid_t) -> [String] {
-        let windows = allWindows(pid)
+    /// Terminal windows with a working agent, and the ones where an agent is asking for an answer.
+    private func terminalAgents(_ pid: pid_t) -> ([String], [String]) {
         var names: [String] = []
-        for w in windows {
-            var busy = false
+        var asking: [String] = []
+        for w in allWindows(pid) {
+            var busy = false, asks = false
             for area in descendants(of: w, role: kAXTextAreaRole, max: 400) {
-                if let text = visibleText(area)?.lowercased(), Self.busyHints.contains(where: text.contains) { busy = true; break }
+                guard let text = visibleText(area)?.lowercased() else { continue }
+                if Self.busyHints.contains(where: text.contains) { busy = true }
+                // Only the last lines: a prompt that's still on screen, not one scrolled past.
+                if Self.askHints.contains(where: String(text.suffix(600)).contains) { asks = true }
             }
-            guard busy else { continue }
             let title = Self.cleanWindowTitle(attr(w, kAXTitleAttribute) ?? "")
+            if asks { asking.append(title) }
+            guard busy else { continue }
             names.append(title.isEmpty || names.contains(title) ? "Terminal window \(names.count + 1)" : title)
         }
-        return names
+        return (names, asking)
     }
 
     /// For the report: each terminal window's title and how much visible text Pip could read.
@@ -385,10 +413,12 @@ final class Worker: @unchecked Sendable {
         var sessions: [String] = []
         var step: String?
         var focused: String?
+        var approval = false
         let nodes = walk(app) { el, role, label in
             guard role == kAXButtonRole else { return true }
             let text = label.trimmingCharacters(in: .whitespaces)
             if found == nil, Self.isStopLabel(text) { found = el }
+            if !approval, Self.isApprovalLabel(text) { approval = true }
             if let s = Self.runningSession(el, text) {
                 sessions.append(s)
             } else if step == nil, text.hasSuffix(" running"), text.count > 8 {
@@ -406,7 +436,7 @@ final class Worker: @unchecked Sendable {
         // The app has windows, but none could be read: don't take that as "stopped working".
         if nodes == 0, (windowCounts[pid] ?? 0) > 0 { return Probe(working: false, title: title, unknown: true) }
         return Probe(working: found != nil, title: title, sessions: sessionApps.contains(pid) ? sessions : nil,
-                     step: step, focused: focused)
+                     step: step, focused: focused, asking: approval ? [focused ?? title ?? ""] : [])
     }
 
     /// Presses the sidebar row for the chat titled `title`. When the row is not in the current sidebar,

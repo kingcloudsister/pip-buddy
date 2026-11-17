@@ -112,6 +112,18 @@ private struct AppRow: View {
             if app.isWorking {
                 WorkingDots().offset(y: 14)
             }
+            if app.isMessages, app.unread > 0 {
+                // Unread messages, like the app's own Dock badge.
+                Text(app.unread > 99 ? "99+" : "\(app.unread)")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .frame(minWidth: 15, minHeight: 15)
+                    .background(Capsule().fill(Theme.rose))
+                    .overlay(Capsule().strokeBorder(Theme.tan, lineWidth: 1.5).padding(-1.5))
+                    .offset(x: 12, y: -12)
+                    .transition(.scale.combined(with: .opacity))
+            }
             if app.sessions.count > 1 {
                 // Several chats running in this app at once.
                 Text("\(app.sessions.count)")

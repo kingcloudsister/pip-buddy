@@ -86,6 +86,10 @@ struct ChatList: View {
                          badge: ("SETUP", Theme.readyBg, Theme.readyFg)) { store.requestAccess(openSettings: true) }
                 }
                 ForEach(store.visibleApps) { t in
+                    if t.isMessages {
+                        Card(title: store.cardTitle(t), detail: store.cardDetail(t), icon: t.icon, badge: store.badge(t)) { store.open(t.id) }
+                            .contextMenu { appMenu(t) }
+                    }
                     // Finished chats first, newest on top, then whatever is still running.
                     ForEach(t.waiting.reversed(), id: \.title) { w in
                         Card(title: w.title, detail: store.waitingDetail(w), icon: t.icon,
@@ -106,7 +110,7 @@ struct ChatList: View {
                         Card(title: store.workingTitle(t), detail: store.workingDetail(t), icon: t.icon,
                              badge: ("WORKING", Theme.workingBg, Theme.workingFg)) { store.open(t.id) }
                             .contextMenu { appMenu(t) }
-                    } else if t.waiting.isEmpty {
+                    } else if t.waiting.isEmpty, !t.isMessages {
                         // Open and quiet.
                         Card(title: t.name, detail: "Nothing running right now", icon: t.icon,
                              badge: ("IDLE", Theme.quietBg, Theme.quietFg)) { store.open(t.id) }

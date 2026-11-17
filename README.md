@@ -34,7 +34,8 @@ Pip keeps track for you. It sits quietly on the edge of your screen, notices on 
 - **Finds your agents on its own:** Claude, ChatGPT, Cursor, browser agents, and terminal agents like Claude Code, Codex and Gemini CLI. No setup.
 - **Tells you when one is done:** a card slides out with the chat's name and the last thing it did. Click **Tap back** to land right in that chat.
 - **Shows what each one is doing:** hover a tile for every running chat and its current step ("Now: Running the tests · 6 min").
-- **Doesn't let you forget:** a chat you glanced at stays as **your turn** until you reply, with one gentle nudge after 10 minutes.
+- **Doesn't let you forget:** when an agent asks you something, it stays as **your turn** until you answer, with one gentle nudge. Finished tasks you've seen just clear.
+- **New messages too:** add Beeper, Slack, WeChat or Discord and see their unread count, from the Dock badge only.
 - **Stays out of the way:** a slim strip on the left, right or top edge, or folded down to just its face.
 - **Private:** everything stays on your Mac. See [Privacy](#privacy).
 
@@ -57,14 +58,15 @@ Pip checks this repo for a new release when it starts and every few hours. When 
 
 Right-click Pip for **Check for Updates…**, or to turn automatic checks off.
 
-## Ready, then your turn
+## Ready, done, or your turn
 
-A finished chat stays on the strip until you pick it back up, so a quick glance doesn't make it vanish:
+- **Ready** (pink dot): an agent finished and you haven't looked yet. A quick glance doesn't count.
+- **Done:** once you've spent about 15 seconds on it, a finished task leaves the strip. Nothing to reply to, so no reminders.
+- **Your turn** (dashed tile, hollow ring): the agent asked you something, like a question, an approval ("Allow / Deny", "Do you want to proceed?"), or a Grok bot waiting on your answer. That stays until the agent runs again, with one reminder after 10 minutes away. Right-click → **Done with This** to let it go.
 
-- **Ready** (pink dot): it finished and you haven't looked yet.
-- **Your turn** (dashed tile, hollow ring): you looked for at least 15 seconds, then left. The card keeps the chat's name, the last thing it did, and how long it has waited.
-- After 10 minutes away, Pip nudges once: "Still waiting on you".
-- It goes away when that chat runs again, when you right-click → **Done with This**, or after 8 hours.
+## Messages
+
+Add a messaging app with ⊕ (Beeper, Slack, WeChat, Discord, WhatsApp, Messages, Telegram) and Pip shows when new messages arrive: its tile appears with the unread count, and a card pops up unless you're already in that app. It goes away once you've read them. Pip reads only the number on the app's Dock icon, never anything inside the app.
 
 ## Finding agents on its own
 
@@ -96,12 +98,13 @@ curl -s "http://127.0.0.1:47321/working?app=My%20Agent&open=com.apple.Terminal"
 curl -s "http://127.0.0.1:47321/done?app=My%20Agent&note=Tests%20pass&open=com.apple.Terminal"
 ```
 
-`app` names the tile, `open` is the app to bring forward on click, `note` shows on the card. `/idle` clears it.
+`app` names the tile, `open` is the app to bring forward on click, `note` shows on the card. Add `&ask=1` to `/done` when the agent is waiting on an answer, so it stays as "your turn". `/idle` clears it.
 
 ## Privacy
 
 Everything Pip knows stays on your Mac.
 
+- **Messaging apps:** only the unread number on their Dock icon. Pip never looks inside them, and never searches them for agents.
 - **What it reads:** with the Accessibility permission, the window titles, button labels and chat names of the apps you track, plus Dock badges. To find agents it also glances at other running apps' buttons, and at the text on screen in terminal windows, only to look for a busy line like "esc to interrupt"; nothing from it is kept. To see windows on other desktops it uses the same window lookup as window-switcher apps. For Grok Bot, the bot names, unread counts and message IDs in Grok Bot's local list (never the messages, and never its saved secrets). Not the messages themselves, in any app.
 - **What it presses:** only a chat's row in an app's sidebar (and Claude's Chat/Code switch), and only when you click that chat in Pip. It never types.
 - **What it stores:** your app list, its position and settings (in its preferences), and a log of state changes at `~/Library/Logs/Pip.log` (app and chat names, no message text). None of it is ever uploaded.

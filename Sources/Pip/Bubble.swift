@@ -56,6 +56,11 @@ struct BubbleContent {
         let shown = store.visibleApps
         if let a = store.announcing, let i = shown.firstIndex(where: { $0.id == a }) {
             let t = shown[i]
+            if t.isMessages {
+                return BubbleContent(key: "msg:" + a + "\(t.unread)", icon: t.icon, title: store.cardTitle(t),
+                                     badge: store.badge(t), detail: store.cardDetail(t), cta: "Open \(t.name)", tapID: a,
+                                     centerY: store.collapsed ? Theme.mascotCenter : Theme.rowCenter(i))
+            }
             // Minimized, the card comes out of the face.
             let title = store.announceTitle ?? store.cardTitle(t)
             let w = t.waiting.last { $0.title == title }
