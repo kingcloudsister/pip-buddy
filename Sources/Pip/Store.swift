@@ -333,6 +333,8 @@ final class Store: ObservableObject {
 
             if p.sessions != nil, !apps[i].listsChats { apps[i].listsChats = true }
             if apps[i].focused != p.focused, p.sessions != nil { apps[i].focused = p.focused }
+            // Couldn't read the app this time: keep what we knew rather than guess it stopped.
+            if p.unknown { logChange(apps[i], p); continue }
             let ended = p.sessions.map { updateSessions(i, $0) } ?? []
             if p.sessions != nil || p.step != nil { placeStep(i, p.step, focused: p.focused) }
             // A chat that runs again has been picked back up.
@@ -351,8 +353,10 @@ final class Store: ObservableObject {
                     finish(id, note: nil, chat: ended.last)
                 } else {
                     // Two quiet polls in a row so a brief flicker of the stop button is not a false "done".
+                    // A web chat's Stop button can blink out between steps, so browsers get a longer wait.
                     misses[id, default: 0] += 1
-                    if misses[id]! >= 2 { finish(id, note: nil) }
+                    let patience = Worker.browsers.contains(apps[i].bundleID ?? "") ? 3 : 2
+                    if misses[id]! >= patience { finish(id, note: nil) }
                 }
             }
             if !apps[i].isWorking, apps[i].step != nil { apps[i].step = nil }

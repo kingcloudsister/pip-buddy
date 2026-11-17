@@ -12,6 +12,9 @@ struct Probe {
     var step: String? = nil
     /// The conversation open on screen, so `step` can be put on the right one.
     var focused: String? = nil
+    /// Pip couldn't read the app's windows this time (say, a full-screen window on another desktop it hasn't
+    /// found yet). Nothing about the app changed; it just couldn't look.
+    var unknown = false
 }
 
 /// Polls tracked apps through the Accessibility API.
@@ -126,6 +129,7 @@ final class Worker: @unchecked Sendable {
 
     func probeAll(_ targets: [Target]) -> [String: Probe] {
         let badges = dockBadges()
+        refreshWindowCounts()
         polls += 1
         var result: [String: Probe] = [:]
         for t in targets {
@@ -250,25 +254,70 @@ final class Worker: @unchecked Sendable {
     func allWindows(_ pid: pid_t) -> [AXUIElement] {
         let app = appElement(pid, enhance: false)
         var windows: [AXUIElement] = attr(app, kAXWindowsAttribute) ?? []
-        let cached = otherSpaceWindows[pid].flatMap { Date().timeIntervalSince($0.0) < 15 ? $0.1 : nil }
-        let others = cached ?? remoteWindows(pid)
-        if cached == nil { otherSpaceWindows[pid] = (Date(), others) }
-        for w in others where !windows.contains(where: { CFEqual($0, w) }) { windows.append(w) }
+        // macOS's own window count says whether some are elsewhere; only then look them up.
+        let expected = windowCounts[pid] ?? windows.count
+        guard windows.count < expected else { return windows }
+        // Reuse the last lookup for 30 seconds, even when it found nothing (some apps, like Dia, show
+        // nothing at all while their window is on another desktop), so the scan doesn't repeat every poll.
+        if let (at, cached) = otherSpaceWindows[pid], Date().timeIntervalSince(at) < 30 {
+            for w in cached where !windows.contains(where: { CFEqual($0, w) }) { windows.append(w) }
+            return windows
+        }
+        let found = remoteWindows(pid, known: windows, want: expected)
+        otherSpaceWindows[pid] = (Date(), found)
+        for w in found where !windows.contains(where: { CFEqual($0, w) }) { windows.append(w) }
         return windows
     }
 
-    private func remoteWindows(_ pid: pid_t) -> [AXUIElement] {
+    private func remoteWindows(_ pid: pid_t, known: [AXUIElement], want: Int) -> [AXUIElement] {
         var found: [AXUIElement] = []
         var token = Data(count: 20)
         token.replaceSubrange(0..<4, with: withUnsafeBytes(of: pid) { Data($0) })
         token.replaceSubrange(8..<12, with: withUnsafeBytes(of: UInt32(0x636f636f)) { Data($0) })
-        for id in UInt64(0)..<400 {
+        // Element numbers can run into the thousands in browsers; stop once every window is found.
+        for id in UInt64(0)..<4000 where known.count + found.count < want {
             token.replaceSubrange(12..<20, with: withUnsafeBytes(of: id) { Data($0) })
             guard let el = _AXUIElementCreateWithRemoteToken(token as CFData)?.takeRetainedValue() else { continue }
             AXUIElementSetMessagingTimeout(el, 0.05)
-            if (attr(el, kAXSubroleAttribute) as String?) == kAXStandardWindowSubrole { found.append(el) }
+            if (attr(el, kAXSubroleAttribute) as String?) == kAXStandardWindowSubrole,
+               !known.contains(where: { CFEqual($0, el) }) { found.append(el) }
         }
         return found
+    }
+
+    /// For the report: macOS's count of the app's windows, what Accessibility lists, and what the lookup finds.
+    func windowReport(_ pid: pid_t) -> String {
+        let ax: [AXUIElement] = attr(appElement(pid, enhance: false), kAXWindowsAttribute) ?? []
+        var subroles: [String: Int] = [:]
+        var token = Data(count: 20)
+        token.replaceSubrange(0..<4, with: withUnsafeBytes(of: pid) { Data($0) })
+        token.replaceSubrange(8..<12, with: withUnsafeBytes(of: UInt32(0x636f636f)) { Data($0) })
+        var firstWindowID: UInt64?
+        for id in UInt64(0)..<4000 {
+            token.replaceSubrange(12..<20, with: withUnsafeBytes(of: id) { Data($0) })
+            guard let el = _AXUIElementCreateWithRemoteToken(token as CFData)?.takeRetainedValue() else { continue }
+            AXUIElementSetMessagingTimeout(el, 0.05)
+            guard let role: String = attr(el, kAXRoleAttribute) else { continue }
+            let key = role + "/" + ((attr(el, kAXSubroleAttribute) as String?) ?? "-")
+            subroles[key, default: 0] += 1
+            if role == kAXWindowRole, firstWindowID == nil { firstWindowID = id }
+        }
+        return "macOS says \(windowCounts[pid] ?? 0), Accessibility lists \(ax.count), all-desktop lookup sees \(allWindows(pid).count); "
+            + "elements by number: \(subroles.sorted { $0.key < $1.key }.prefix(8).map { "\($0.key)×\($0.value)" }.joined(separator: ", ")); first window at #\(firstWindowID.map(String.init) ?? "none")"
+    }
+
+    private var windowCounts: [pid_t: Int] = [:]
+
+    /// How many real windows each app has, on any desktop (not toolbars, popovers or hidden helpers).
+    private func refreshWindowCounts() {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return }
+        var counts: [pid_t: Int] = [:]
+        for w in list where (w[kCGWindowLayer as String] as? Int) == 0 {
+            guard let pid = w[kCGWindowOwnerPID as String] as? pid_t, let b = w[kCGWindowBounds as String] as? [String: Any],
+                  let width = b["Width"] as? CGFloat, let height = b["Height"] as? CGFloat, width >= 200, height >= 200 else { continue }
+            counts[pid, default: 0] += 1
+        }
+        windowCounts = counts
     }
 
     /// A terminal title like "user — ✳ Fix the login bug — claude — 80×24" → "Fix the login bug":
@@ -328,14 +377,15 @@ final class Worker: @unchecked Sendable {
         // In between, a cached Stop button that is still there is enough to say "working".
         if !full, polls % 2 == 1 {
             if let cached = cachedStop[pid], isStopButton(cached) { return Probe(working: true, title: title) }
-            return Probe(working: false, title: title, sessions: nil)
+            // Without a cached Stop button, only a full read can say the app stopped working.
+            return Probe(working: false, title: title, sessions: nil, unknown: true)
         }
         cachedStop[pid] = nil
         var found: AXUIElement?
         var sessions: [String] = []
         var step: String?
         var focused: String?
-        walk(app) { el, role, label in
+        let nodes = walk(app) { el, role, label in
             guard role == kAXButtonRole else { return true }
             let text = label.trimmingCharacters(in: .whitespaces)
             if found == nil, Self.isStopLabel(text) { found = el }
@@ -353,6 +403,8 @@ final class Worker: @unchecked Sendable {
         }
         if let found { cachedStop[pid] = found }
         if !sessions.isEmpty { sessionApps.insert(pid) }
+        // The app has windows, but none could be read: don't take that as "stopped working".
+        if nodes == 0, (windowCounts[pid] ?? 0) > 0 { return Probe(working: false, title: title, unknown: true) }
         return Probe(working: found != nil, title: title, sessions: sessionApps.contains(pid) ? sessions : nil,
                      step: step, focused: focused)
     }
@@ -499,6 +551,7 @@ final class Worker: @unchecked Sendable {
     }
 
     func diagnostics(_ targets: [Target], trusted: Bool) -> String {
+        refreshWindowCounts()
         var lines = ["Pip diagnostics", "Accessibility allowed: \(trusted ? "yes" : "no")"]
         let badges = trusted ? dockBadges() : [:]
         for t in targets {
@@ -522,6 +575,7 @@ final class Worker: @unchecked Sendable {
             lines.append("nodes scanned: \(nodes)\(nodes >= Self.maxNodes ? " (limit reached)" : ""), buttons: \(buttons.count)")
             if !sessions.isEmpty { lines.append("running conversations: " + sessions.joined(separator: "; ")) }
             if Self.terminals.contains(t.id) { lines.append("terminal windows: " + terminalReport(t.pid)) }
+            lines.append("windows: " + windowReport(t.pid))
             let live = probe(t.pid, full: true)
             if let f = live.focused { lines.append("on screen: " + f) }
             if let st = live.step { lines.append("current step: " + st) }
