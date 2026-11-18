@@ -145,11 +145,11 @@ final class Worker: @unchecked Sendable {
         for t in targets {
             // Messaging apps: only the Dock badge, nothing from inside the app.
             if Self.messageApps.contains(t.id) {
-                result[t.id] = Probe(working: false, title: nil, badge: badges[t.name] ?? badges[t.name.replacingOccurrences(of: " Desktop", with: "")])
+                result[t.id] = Probe(working: false, title: nil, badge: badges[t.id] ?? badges[t.name])
                 continue
             }
             var p = Self.terminals.contains(t.id) ? terminalProbe(t.pid) : probe(t.pid)
-            p.badge = badges[t.name]
+            p.badge = badges[t.id] ?? badges[t.name]
             result[t.id] = p
         }
         return result
@@ -576,14 +576,16 @@ final class Worker: @unchecked Sendable {
         guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return [:] }
         let el = AXUIElementCreateApplication(dock.processIdentifier)
         AXUIElementSetMessagingTimeout(el, 0.5)
-        guard let kids: [AXUIElement] = attr(el, kAXChildrenAttribute),
-              let list = kids.first(where: { (attr($0, kAXRoleAttribute) as String?) == kAXListRole }),
-              let items: [AXUIElement] = attr(list, kAXChildrenAttribute) else { return [:] }
+        guard let kids: [AXUIElement] = attr(el, kAXChildrenAttribute) else { return [:] }
+        // Every section of the Dock (apps, and any others), not just the first.
+        let items = kids.filter { (attr($0, kAXRoleAttribute) as String?) == kAXListRole }
+            .flatMap { (attr($0, kAXChildrenAttribute) as [AXUIElement]?) ?? [] }
         var out: [String: String] = [:]
         for item in items {
-            if let title: String = attr(item, kAXTitleAttribute), let badge: String = attr(item, "AXStatusLabel") {
-                out[title] = badge
-            }
+            guard let badge: String = attr(item, "AXStatusLabel") else { continue }
+            if let title: String = attr(item, kAXTitleAttribute) { out[title] = badge }
+            // Also by app ID: a Dock item's name can differ from the app's ("Beeper Desktop" vs "Beeper").
+            if let url: URL = attr(item, kAXURLAttribute), let id = Bundle(url: url)?.bundleIdentifier { out[id] = badge }
         }
         return out
     }
@@ -592,9 +594,10 @@ final class Worker: @unchecked Sendable {
         refreshWindowCounts()
         var lines = ["Pip diagnostics", "Accessibility allowed: \(trusted ? "yes" : "no")"]
         let badges = trusted ? dockBadges() : [:]
+        lines.append("Dock badges: " + (badges.isEmpty ? "none" : badges.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")))
         for t in targets {
             lines.append("")
-            lines.append("== \(t.name) (\(t.id)) Dock badge: \(badges[t.name] ?? "none")")
+            lines.append("== \(t.name) (\(t.id)) Dock badge: \(badges[t.id] ?? badges[t.name] ?? "none")")
             guard trusted else { continue }
             var buttons: [String] = []
             var hints: [String] = []
