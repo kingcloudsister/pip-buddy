@@ -66,7 +66,7 @@ Right-click Pip for **Check for Updates…**, or to turn automatic checks off.
 
 ## Messages
 
-Add a messaging app with ⊕ (Beeper, Slack, WeChat, Discord, WhatsApp, Messages, Telegram) and Pip shows when new messages arrive: its tile appears with the unread count, and a card pops up unless you're already in that app. It goes away once you've read them. Pip reads only the number on the app's Dock icon, never anything inside the app.
+Messaging apps (Beeper, Slack, WeChat, Discord, WhatsApp, Messages, Telegram) are watched as soon as they're open. Their tile shows a pink unread count when new messages arrive, and a card pops up unless you're already in that app. If an app never shows a count, check that its Dock badge is on (System Settings → Notifications → the app → Badge application icon). Pip reads only the number on the app's Dock icon, never anything inside the app.
 
 ## Finding agents on its own
 

@@ -54,6 +54,14 @@ final class Watcher {
         busy = true
         let targets = targets()
         let readBots = targets.contains { $0.id == GrokRoster.bundleID }
+        // Messaging apps are watched as soon as they're open (only their Dock badge is read).
+        if store.findAgents {
+            let tracked = Set(store.apps.compactMap(\.bundleID))
+            for app in NSWorkspace.shared.runningApplications {
+                guard let id = app.bundleIdentifier, Worker.messageApps.contains(id), !tracked.contains(id) else { continue }
+                store.discovered(id)
+            }
+        }
         discoveryTick += 1
         let candidates = store.findAgents && discoveryTick % 2 == 0 ? nextCandidates() : []
         worker.queue.async { [worker] in

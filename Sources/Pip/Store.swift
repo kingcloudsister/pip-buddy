@@ -181,6 +181,7 @@ final class Store: ObservableObject {
     func discovered(_ bundleID: String) {
         guard findAgents, !ignored.contains(bundleID), app(bundleID) == nil else { return }
         add(bundleID)
+        if let t = app(bundleID) { Self.log("now watching \(t.name) (\(t.isMessages ? "messaging app, opened" : "agent found"))") }
     }
 
     func remove(_ id: String) {
@@ -625,7 +626,6 @@ final class Store: ObservableObject {
     var visibleApps: [Tracked] {
         _ = runningChanged
         return apps.filter { t in
-            if t.isMessages { return t.unread > 0 && isRunning(t) }   // messaging apps only while there's something new
             return t.bundleID == nil ? (t.isWorking || !t.waiting.isEmpty) : isRunning(t)
         }
     }
@@ -653,7 +653,7 @@ final class Store: ObservableObject {
     // MARK: Monitor panel
 
     func badge(_ t: Tracked) -> Badge {
-        if t.isMessages { return ("NEW", Theme.readyBg, Theme.readyFg) }
+        if t.isMessages { return t.unread > 0 ? ("NEW", Theme.readyBg, Theme.readyFg) : ("QUIET", Theme.quietBg, Theme.quietFg) }
         if t.unseen { return ("READY", Theme.readyBg, Theme.readyFg) }
         if t.isWorking { return ("WORKING", Theme.workingBg, Theme.workingFg) }
         if t.yourTurn { return Self.turnBadge }
@@ -671,7 +671,7 @@ final class Store: ObservableObject {
 
     /// The conversation's name: the one that just finished, the ones running, or the window title.
     func cardTitle(_ t: Tracked) -> String {
-        if t.isMessages { return t.unread == 1 ? "1 new message" : "\(t.unread) new messages" }
+        if t.isMessages { return t.unread == 0 ? t.name : t.unread == 1 ? "1 new message" : "\(t.unread) new messages" }
         if let w = t.newestUnread { return w.title }
         if t.isWorking { return workingTitle(t) }
         if let w = t.waiting.last { return w.title }
@@ -721,7 +721,7 @@ final class Store: ObservableObject {
 
     /// One line for the hover card; a short list when the app has several chats going.
     func cardDetail(_ t: Tracked) -> String {
-        if t.isMessages { return "in \(t.name)" }
+        if t.isMessages { return t.unread == 0 ? "No new messages" : "in \(t.name)" }
         let count = t.waiting.count + max(t.sessions.count, t.isWorking ? 1 : 0)
         if count > 1 {
             var lines = t.waiting.reversed().map { "• \($0.title) — \($0.read ? "your turn" : "ready")" }
